@@ -17,10 +17,8 @@
 #  - tools/scripts/test-installed: rtoskit-libc's unit tests built against the installed toolchain only.
 # The GCC C torture tests (tools/scripts/gcc-torture) are long, so they run on request (workflow_dispatch).
 #
-# The jobs need a secret, SUBMODULE_TOKEN: a token with read access to sgstreet/rtoskit-libc, which is private
-# (the default GITHUB_TOKEN reaches only this repository). A build uses about 15 GB of disk and an hour or
-# more on a standard runner: set the repository variable CI_RUNNER to the label of a larger runner to speed
-# it up.
+# A build uses about 15 GB of disk and an hour or more on a standard runner: set the repository variable
+# CI_RUNNER to the label of a larger runner to speed it up.
 name: ci
 
 on:
@@ -100,17 +98,6 @@ jobs:
           (cd make-4.4.1 && ./configure --prefix=/usr/local > /dev/null && make -j"$(nproc)" > /dev/null && sudo make install > /dev/null)
           hash -r
           make --version | head -1
-
-      # rtoskit-libc is a private repository in another repository: git reaches it with SUBMODULE_TOKEN
-      - name: Access to the submodules
-        env:
-          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
-        run: |
-          if [ -z "${SUBMODULE_TOKEN}" ]; then
-            echo "::error::the secret SUBMODULE_TOKEN is not set: it needs read access to sgstreet/rtoskit-libc"
-            exit 1
-          fi
-          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "git@github.com:"
 
       - name: Cache the downloaded sources
         uses: actions/cache@v4

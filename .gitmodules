@@ -3,4 +3,4 @@
 	url = https://github.com/crosstool-ng/crosstool-ng.git
 [submodule "external/rtoskit-libc"]
 	path = external/rtoskit-libc
-	url = git@github.com:sgstreet/rtoskit-libc.git
+	url = https://github.com/sgstreet/rtoskit-libc.git
