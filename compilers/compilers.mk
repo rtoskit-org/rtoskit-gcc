@@ -1,4 +1,4 @@
 
 include ${TOOLS_ROOT}/makefiles/tree.mk
 
-target: cross-ng-arm-none-eabi
+target: arm-none-eabi

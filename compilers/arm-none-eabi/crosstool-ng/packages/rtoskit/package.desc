@@ -1,0 +1,4 @@
+origin='Red Rocket Computing'
+repository='git https://github.com/sgstreet/rtoskit-libc.git'
+relevantpattern='*.*.*|.'
+archive_formats='.tar.gz'

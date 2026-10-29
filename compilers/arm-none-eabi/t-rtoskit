@@ -1,0 +1,64 @@
+# Copyright (C) 2026 Red Rocket Computing, LLC
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# t-rtoskit
+#
+# GCC multilib fragment for arm-none-eabi with rtoskit-libc, selected with
+# --with-multilib-list=@t-rtoskit. Only the multilibs rtoskit-libc has code for
+# are built (rtoskit/multilib.map maps each one to an rtoskit-libc ARCH_CROSS);
+# other M-profile options are matched or reused onto the closest compatible one.
+# Modelled on gcc/config/arm/t-rmprofile; GCC copies this file into
+# gcc/config/arm through the generated local patch (arm-none-eabi.mk).
+
+MULTILIB_OPTIONS	= mthumb
+MULTILIB_DIRNAMES	= thumb
+MULTILIB_OPTIONS	+= march=armv6s-m/march=armv7-m/march=armv7e-m/march=armv7e-m+fp/march=armv7e-m+fp.dp/march=armv8-m.main/march=armv8-m.main+fp
+MULTILIB_DIRNAMES	+= v6-m v7-m v7e-m v7e-m+fp v7e-m+dp v8-m.main v8-m.main+fp
+MULTILIB_OPTIONS	+= mfloat-abi=soft/mfloat-abi=softfp/mfloat-abi=hard
+MULTILIB_DIRNAMES	+= nofp softfp hard
+MULTILIB_EXCEPTIONS	=
+MULTILIB_MATCHES	=
+MULTILIB_REUSE		=
+
+MULTILIB_REQUIRED	= mthumb/march=armv6s-m/mfloat-abi=soft
+MULTILIB_REQUIRED	+= mthumb/march=armv7-m/mfloat-abi=soft
+MULTILIB_REQUIRED	+= mthumb/march=armv7e-m/mfloat-abi=soft
+MULTILIB_REQUIRED	+= mthumb/march=armv8-m.main/mfloat-abi=soft
+MULTILIB_REQUIRED	+= mthumb/march=armv7e-m+fp/mfloat-abi=hard
+MULTILIB_REQUIRED	+= mthumb/march=armv7e-m+fp.dp/mfloat-abi=hard
+MULTILIB_REQUIRED	+= mthumb/march=armv8-m.main+fp/mfloat-abi=hard
+
+# Armv6-M and Armv8-M Baseline (Cortex-M23) use the Armv6S-M library
+MULTILIB_MATCHES	+= march?armv6s-m=march?armv6-m
+MULTILIB_MATCHES	+= march?armv6s-m=march?armv8-m.base
+MULTILIB_MATCHES	+= march?armv6s-m=mlibarch?armv8-m.base
+
+# The DSP extension and the FPv5 spelling select the same libraries
+MULTILIB_MATCHES	+= march?armv7e-m+fp=march?armv7e-m+fpv5
+MULTILIB_MATCHES	+= march?armv8-m.main=mlibarch?armv8-m.main
+MULTILIB_MATCHES	+= march?armv8-m.main=mlibarch?armv8-m.main+dsp
+MULTILIB_MATCHES	+= march?armv8-m.main+fp=mlibarch?armv8-m.main+fp
+MULTILIB_MATCHES	+= march?armv8-m.main+fp=mlibarch?armv8-m.main+dsp+fp
+
+# Armv8-M Mainline with a double-precision FPU and Armv8.1-M Mainline use the
+# Armv8-M Mainline libraries: the hard-float calling convention is the same
+MULTILIB_MATCHES	+= march?armv8-m.main+fp=mlibarch?armv8-m.main+fp.dp
+MULTILIB_MATCHES	+= march?armv8-m.main+fp=mlibarch?armv8-m.main+dsp+fp.dp
+v8_1m_nofp_variants	= +dsp +mve +dsp+mve +pacbti +pacbti+dsp +dsp+pacbti +pacbti+mve +pacbti+dsp+mve +dsp+pacbti+mve
+v8_1m_fp_variants	= +fp +dsp+fp +mve.fp +fp+mve +fp.dp +dsp+fp.dp +fp.dp+mve +fp.dp+mve.fp
+MULTILIB_MATCHES	+= march?armv8-m.main=mlibarch?armv8.1-m.main
+MULTILIB_MATCHES	+= $(foreach EXT, $(v8_1m_nofp_variants), \
+			     march?armv8-m.main=mlibarch?armv8.1-m.main$(EXT))
+MULTILIB_MATCHES	+= $(foreach EXT, $(v8_1m_fp_variants), \
+			     march?armv8-m.main+fp=mlibarch?armv8.1-m.main$(EXT) \
+			     march?armv8-m.main+fp=mlibarch?armv8.1-m.main+pacbti$(EXT))
+
+# softfp has the soft-float calling convention, so it links the soft-float libraries
+MULTILIB_REUSE		+= $(foreach ARCH, armv6s-m armv7-m armv7e-m armv8-m\.main, \
+			     mthumb/march.$(ARCH)/mfloat-abi.soft=mthumb/march.$(ARCH)/mfloat-abi.softfp)
+MULTILIB_REUSE		+= $(foreach FP, fp fp\.dp, \
+			     mthumb/march.armv7e-m/mfloat-abi.soft=mthumb/march.armv7e-m+$(FP)/mfloat-abi.softfp)
+MULTILIB_REUSE		+= mthumb/march.armv8-m\.main/mfloat-abi.soft=mthumb/march.armv8-m\.main+fp/mfloat-abi.softfp

@@ -1,0 +1,10 @@
+%include <rtoskit.specs>
+
+%rename link rtoskit_linux_link
+
+*link:
+-z noexecstack -T rtos-linux-headers.ld %(rtoskit_linux_link)
+
+*lib:
+-lrtos-linux %{-libc=*:-lc-%*;:-lc}
+
