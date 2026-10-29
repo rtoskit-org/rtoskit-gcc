@@ -22,7 +22,6 @@ Each toolchain has:
 - **GNU make 4.4 or newer.** rtoskit-libc's build needs it, and the build stops with a message if it is older.
 - **qemu-user** (`qemu-arm`) to run programs linked with the Linux test port, and **dejagnu** for `gcc-torture`:
   `sudo apt install -y qemu-user dejagnu`.
-- Access to the private rtoskit-libc repository, for the git submodule.
 
 ## Build
 
@@ -104,7 +103,6 @@ They need `qemu-arm` (`qemu-user`), and `gcc-torture` also `runtest` (`dejagnu`)
 
 `.github/workflows/ci.yml` builds every version in `versions.inc` from scratch, then runs `validate-toolchain` and `test-installed` on it, and uploads the toolchain. The GCC torture tests run on request (*Run workflow*, *torture*).
 
-- **Secret `SUBMODULE_TOKEN`** (required): a token with read access to `sgstreet/rtoskit-libc`, which is private; the default token reaches only this repository.
 - **Variable `CI_RUNNER`** (optional): the label of a larger runner. A build uses about 15 GB of disk and takes an hour or more on a standard runner.
 - The build uses `BUILD_MANUALS=n` (no PDF or HTML manuals), which is also available locally.
 
