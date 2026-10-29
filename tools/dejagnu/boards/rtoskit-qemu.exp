@@ -1,0 +1,29 @@
+# DejaGnu board: arm-none-eabi GCC with rtoskit-libc; programs link against the Linux test port
+# (--specs=rtoskit-linux.specs) and run under qemu-arm. The compiler comes from --tool_exec and the
+# multilib options from $RTOSKIT_FLAGS.
+load_generic_config "sim"
+load_base_board_description "basic-sim"
+process_multilib_options ""
+set_board_info compiler "[find_gcc]"
+if {[info exists env(RTOSKIT_FLAGS)]} {
+    set_board_info cflags "--specs=rtoskit-linux.specs $env(RTOSKIT_FLAGS)"
+} else {
+    set_board_info cflags "--specs=rtoskit-linux.specs"
+}
+set_board_info ldflags ""
+set_board_info ldscript ""
+set_board_info needs_status_wrapper 0
+set_board_info gcc,stack_size 16384
+set_board_info gdb,nosignals 1
+
+# Run the program under qemu-user; its exit status is the test's
+proc rtoskit-qemu_load { dest prog args } {
+    if {![file exists $prog]} {
+        return [list "untested" ""]
+    }
+    set res [local_exec "qemu-arm -cpu max $prog" "" "" 120]
+    if { [lindex $res 0] == 0 } {
+        return [list "pass" [lindex $res 1]]
+    }
+    return [list "fail" [lindex $res 1]]
+}

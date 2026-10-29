@@ -22,6 +22,14 @@ else
 include ${TOOLS_ROOT}/makefiles/common.mk
 include ${SOURCE_DIR}/versions.inc
 
+# BUILD_MANUALS=n skips the GCC and binutils PDF and HTML manuals: faster, and no TeX needed
+BUILD_MANUALS ?= y
+ifeq (${BUILD_MANUALS},n)
+MANUALS_LINE := \# CT_BUILD_MANUALS is not set
+else
+MANUALS_LINE := CT_BUILD_MANUALS=y
+endif
+
 CROSSTOOL_NG_SOURCE := ${PROJECT_ROOT}/external/crosstool-ng
 RTOSKIT_LIBC_SOURCE := ${PROJECT_ROOT}/external/rtoskit-libc
 
@@ -106,6 +114,7 @@ ${CURDIR}/gcc-%/.config: ${TOOLCHAIN_INPUTS}
 	    -e 's|@SOURCE_DIR@|${SOURCE_DIR}|g' \
 	    -e 's|@PATCH_DIR@|${PATCH_DIR}|g' \
 	    -e 's|@PROJECT_ROOT@|${PROJECT_ROOT}|g' \
+	    -e 's|@BUILD_MANUALS@|${MANUALS_LINE}|g' \
 	    ${SOURCE_DIR}/arm-none-eabi.defconfig.in > $(@D)/defconfig
 	cd $(@D) && ${CT_NG} defconfig DEFCONFIG=$(@D)/defconfig
 	grep -q '^CT_GCC_VERSION="$*"$$' $@ || { echo "crosstool-NG $$(cat ${CURDIR}/crosstool-ng.rev) has no GCC $* (it selected $$(grep '^CT_GCC_VERSION=' $@)); see tools/scripts/gcc-releases" >&2; exit 1; }

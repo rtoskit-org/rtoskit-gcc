@@ -1,0 +1,163 @@
+#
+# Copyright (C) 2026 Red Rocket Computing, LLC
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# ci.yml
+#
+# Created on: Oct 29, 2026
+#     Author: Stephen Street (stephen@redrocketcomputing.com)
+#
+
+# The pull request gate: build each toolchain in compilers/arm-none-eabi/versions.inc from scratch, then
+#  - tools/scripts/validate-toolchain: multilibs, core selection, TLS default, gdb Python, and a threaded
+#    program linked with every multilib and run under qemu-arm;
+#  - tools/scripts/test-installed: rtoskit-libc's unit tests built against the installed toolchain only.
+# The GCC C torture tests (tools/scripts/gcc-torture) are long, so they run on request (workflow_dispatch).
+#
+# The jobs need a secret, SUBMODULE_TOKEN: a token with read access to sgstreet/rtoskit-libc, which is private
+# (the default GITHUB_TOKEN reaches only this repository). A build uses about 15 GB of disk and an hour or
+# more on a standard runner: set the repository variable CI_RUNNER to the label of a larger runner to speed
+# it up.
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      torture:
+        description: Also run the GCC C torture tests (about 30 minutes per toolchain)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: shellcheck
+        run: shellcheck -S warning tools/scripts/gcc-releases tools/scripts/validate-toolchain tools/scripts/test-installed tools/scripts/gcc-torture
+
+  versions:
+    name: versions
+    runs-on: ubuntu-latest
+    outputs:
+      gcc: ${{ steps.list.outputs.gcc }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: GCC versions to build
+        id: list
+        run: |
+          list=$(sed -n 's/^GCC_VERSIONS *[?:]*= *//p' compilers/arm-none-eabi/versions.inc)
+          echo "gcc=$(jq -cn --arg v "${list}" '$v | split(" ")')" >> "${GITHUB_OUTPUT}"
+
+  toolchain:
+    name: toolchain (GCC ${{ matrix.gcc }})
+    needs: versions
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        gcc: ${{ fromJSON(needs.versions.outputs.gcc) }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      # One toolchain build takes about 15 GB; the runner image carries tools that are not needed here
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Install packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends gcc g++ gperf bison flex texinfo help2man make \
+            libncurses-dev python3-dev autoconf automake libtool libtool-bin gawk wget curl bzip2 xz-utils unzip \
+            patch rsync git gettext qemu-user dejagnu
+
+      # rtoskit-libc's build needs GNU make 4.4; the runner image has 4.3
+      - name: GNU make 4.4
+        run: |
+          wget -q https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz
+          tar -xf make-4.4.1.tar.gz
+          (cd make-4.4.1 && ./configure --prefix=/usr/local > /dev/null && make -j"$(nproc)" > /dev/null && sudo make install > /dev/null)
+          hash -r
+          make --version | head -1
+
+      # rtoskit-libc is a private repository in another repository: git reaches it with SUBMODULE_TOKEN
+      - name: Access to the submodules
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -z "${SUBMODULE_TOKEN}" ]; then
+            echo "::error::the secret SUBMODULE_TOKEN is not set: it needs read access to sgstreet/rtoskit-libc"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "git@github.com:"
+
+      - name: Cache the downloaded sources
+        uses: actions/cache@v4
+        with:
+          path: downloads
+          key: downloads-${{ matrix.gcc }}-${{ hashFiles('.gitmodules', 'compilers/arm-none-eabi/versions.inc') }}
+          restore-keys: downloads-${{ matrix.gcc }}-
+
+      - name: Build GCC ${{ matrix.gcc }}
+        run: make -j"$(nproc)" GCC_VERSIONS=${{ matrix.gcc }} BUILD_MANUALS=n
+
+      - name: Unpack the toolchain
+        run: |
+          tar -xf images/gcc-arm-none-eabi-*.tar.xz -C "${RUNNER_TEMP}"
+          echo "TOOLCHAIN=$(echo "${RUNNER_TEMP}"/gcc-arm-none-eabi-*)" >> "${GITHUB_ENV}"
+
+      - name: Validate the toolchain
+        run: tools/scripts/validate-toolchain "${TOOLCHAIN}"
+
+      - name: rtoskit-libc unit tests with the installed toolchain
+        run: tools/scripts/test-installed -j"$(nproc)" "${TOOLCHAIN}"
+
+      - name: GCC C torture tests
+        if: github.event_name == 'workflow_dispatch' && inputs.torture
+        run: |
+          status=0
+          for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m4 -mfloat-abi=hard" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
+            tools/scripts/gcc-torture "${TOOLCHAIN}" "${RUNNER_TEMP}/torture-${options//[^a-z0-9]/_}" "${options}" || status=1
+          done
+          exit ${status}
+
+      - name: Upload the toolchain
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcc-arm-none-eabi-${{ matrix.gcc }}
+          path: images/gcc-arm-none-eabi-*.tar.xz
+          retention-days: 14
+
+      - name: Upload the build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.gcc }}
+          path: |
+            build/release/compilers/arm-none-eabi/gcc-*/build.log*
+            ${{ runner.temp }}/torture-*/gcc.sum
+            ${{ runner.temp }}/torture-*/unexpected.txt
+          if-no-files-found: ignore
+          retention-days: 7

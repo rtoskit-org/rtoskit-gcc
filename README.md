@@ -20,7 +20,8 @@ Each toolchain has:
 		libtool libtool-bin gawk wget curl bzip2 xz-utils unzip patch libstdc++6 rsync git gettext
 
 - **GNU make 4.4 or newer.** rtoskit-libc's build needs it, and the build stops with a message if it is older.
-- **qemu-user** (`qemu-arm`) to run programs linked with the Linux test port, and rtoskit-libc's tests.
+- **qemu-user** (`qemu-arm`) to run programs linked with the Linux test port, and **dejagnu** for `gcc-torture`:
+  `sudo apt install -y qemu-user dejagnu`.
 - Access to the private rtoskit-libc repository, for the git submodule.
 
 ## Build
@@ -38,6 +39,7 @@ beside its work directory in `build/release/compilers/arm-none-eabi/gcc-<version
 | `make distclean` | Delete the build tree, `build/release/` |
 | `make realclean` | Delete `build/`, `images/` (the packaged toolchains) and `downloads/` |
 | `make info` | Show the build configuration |
+| `make BUILD_MANUALS=n` | Skip the GCC and binutils manuals (faster; no TeX needed) |
 
 ## Multilibs
 
@@ -82,6 +84,30 @@ full `rmprofile` set is tracked in [#3](https://github.com/sgstreet/rtoskit-gcc/
 The default TLS model is `-ftls-model=local-exec`, set with GCC's `--with-specs`. Its `__aeabi_read_tp` comes from
 the port.
 
+## Validating a toolchain
+
+Three scripts check an unpacked toolchain; the first two run in CI on every toolchain it builds:
+
+	$ tools/scripts/validate-toolchain gcc-arm-none-eabi-16-2-0
+	$ tools/scripts/test-installed gcc-arm-none-eabi-16-2-0
+	$ tools/scripts/gcc-torture gcc-arm-none-eabi-16-2-0 /tmp/torture "-mcpu=cortex-m4 -mfloat-abi=hard"
+
+| Script | Checks |
+|---|---|
+| `validate-toolchain` | The multilib list, which multilib each core selects, the default TLS model, gdb with Python, and that a threaded `printf`/`sinf`/`thread_local` program links with every multilib (release and speed) and runs under `qemu-arm` |
+| `test-installed` | rtoskit-libc's unit tests built against the *installed* toolchain only (no in-tree include or library paths) for eight core options, release and speed, and run under `qemu-arm`. Tests that need the library's internals are skipped. |
+| `gcc-torture` | GCC's own `gcc.c-torture/execute` tests (about 1700 programs, eight optimisation levels each) through DejaGnu on the multilib the options select. Failures that cannot pass here are listed in `tools/dejagnu/torture.xfail`. |
+
+They need `qemu-arm` (`qemu-user`), and `gcc-torture` also `runtest` (`dejagnu`). All of them run programs through the Linux test port under `qemu-arm`: nothing yet runs the default `none` port on a bare-metal core ([#5](https://github.com/sgstreet/rtoskit-gcc/issues/5)).
+
+## CI
+
+`.github/workflows/ci.yml` builds every version in `versions.inc` from scratch, then runs `validate-toolchain` and `test-installed` on it, and uploads the toolchain. The GCC torture tests run on request (*Run workflow*, *torture*).
+
+- **Secret `SUBMODULE_TOKEN`** (required): a token with read access to `sgstreet/rtoskit-libc`, which is private; the default token reaches only this repository.
+- **Variable `CI_RUNNER`** (optional): the label of a larger runner. A build uses about 15 GB of disk and takes an hour or more on a standard runner.
+- The build uses `BUILD_MANUALS=n` (no PDF or HTML manuals), which is also available locally.
+
 ## Updating the GCC versions
 
 `compilers/arm-none-eabi/versions.inc` lists the versions. `tools/scripts/gcc-releases` keeps it current and never
@@ -107,3 +133,6 @@ If the pinned crosstool-NG does not package a version, `--ct-ng=latest` (or `--c
 | `compilers/arm-none-eabi/crosstool-ng/` | Laid over a copy of the crosstool-NG submodule: the `rtoskit` libc backend |
 | `compilers/arm-none-eabi/t-rtoskit`, `rtoskit/` | The multilib list, its map and the spec files |
 | `external/` | Submodules: crosstool-NG and rtoskit-libc |
+| `tools/scripts/` | `gcc-releases` (versions), `validate-toolchain`, `test-installed`, `gcc-torture` (validation) |
+| `tools/dejagnu/` | The DejaGnu board for `gcc-torture` and its expected failures |
+| `.github/workflows/ci.yml` | CI: build and validate every toolchain |
