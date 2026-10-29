@@ -1,0 +1,39 @@
+# rtoskit-libc options
+
+## depends on BARE_METAL && ARCH_ARM
+## select LIBC_SUPPORT_THREADS_NONE
+## select CC_CORE_NEEDED
+
+## help rtoskit-libc is an ISO C23 C library for small embedded systems,
+## help bound to an RTOS through a link-time interface (the __rtos_* port
+## help functions). It is built once per GCC multilib by its own make build,
+## help so each multilib must map to one of its ARCH_CROSS architectures.
+## help Its headers need C23 and its thread_local support needs the
+## help local-exec TLS model.
+
+config LIBC_RTOSKIT_MULTILIB_MAP
+    string
+    prompt "Multilib to ARCH_CROSS map"
+    default ""
+    help
+      A file mapping each GCC multilib directory (as printed by
+      -print-multi-lib) to the rtoskit-libc ARCH_CROSS built for it, one
+      "<multidir> <arch>" pair per line; '#' starts a comment. The build
+      stops if a multilib has no entry.
+
+config LIBC_RTOSKIT_BUILD_TYPES
+    string
+    prompt "Build types to install"
+    default "release speed"
+    help
+      The rtoskit-libc BUILD_TYPEs to build for every multilib. The first
+      is installed in lib/<multidir>, every other one in
+      lib/<multidir>/<build type>.
+
+config LIBC_RTOSKIT_SPECS
+    string
+    prompt "Spec files to install"
+    default ""
+    help
+      Space-separated GCC spec files installed into the sysroot lib/
+      directory, for use with -specs=<name>.

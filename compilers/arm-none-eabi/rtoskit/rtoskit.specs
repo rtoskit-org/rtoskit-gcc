@@ -1,0 +1,24 @@
+%rename cpp_unique_options rtoskit_cpp_unique_options
+
+*cpp_unique_options:
+-nostdinc -isystem %:find-file(../include) -include stdc-predef.h %(rtoskit_cpp_unique_options)
+
+%rename cc1 rtoskit_cc1
+
+*cc1:
+%{!std=*:-std=gnu23} %(rtoskit_cc1)
+
+%rename link rtoskit_link
+
+*link:
+%{-speed:-L%:find-file(speed)} --gc-sections %(rtoskit_link)
+
+*lib:
+%{-port=*:-lrtos-%*;:-lrtos-none} %{-libc=*:-lc-%*;:-lc}
+
+*startfile:
+
+
+*endfile:
+
+

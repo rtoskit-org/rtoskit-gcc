@@ -1,0 +1,10 @@
+# GCC multilib directory (arm-none-eabi-gcc -print-multi-lib) -> rtoskit-libc ARCH_CROSS
+# Every multilib t-rtoskit builds must be listed; the crosstool-NG rtoskit backend stops on a missing one.
+.                       armv6-m
+thumb/v6-m/nofp         armv6-m
+thumb/v7-m/nofp         armv7-m
+thumb/v7e-m/nofp        armv7-m
+thumb/v8-m.main/nofp    armv7-m
+thumb/v7e-m+fp/hard     armv7e-m
+thumb/v7e-m+dp/hard     armv7e-m-dp
+thumb/v8-m.main+fp/hard armv8-m.main
