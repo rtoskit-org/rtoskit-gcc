@@ -39,6 +39,7 @@ beside its work directory in `build/release/compilers/arm-none-eabi/gcc-<version
 | `make realclean` | Delete `build/`, `images/` (the packaged toolchains) and `downloads/` |
 | `make info` | Show the build configuration |
 | `make BUILD_MANUALS=n` | Skip the GCC and binutils manuals (faster; no TeX needed) |
+| `make PROGRESS_BAR=y\|n` | crosstool-NG's spinner and clock. On by default only when stderr is a terminal, so logs (CI) stay readable |
 
 ## Multilibs
 
