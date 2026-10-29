@@ -1,0 +1,40 @@
+# Expected failures of tools/scripts/gcc-torture (gcc.c-torture/execute), found by running GCC 14.4.0,
+# 15.3.0 and 16.2.0 on three multilibs (Thumb-1 soft-float, Armv7E-M FPv4 hard-float, Armv8-M Mainline
+# hard-float): the failures were identical on all three multilibs of a compiler. None of them is a compiler
+# or libgcc fault. An entry is a test name, optionally prefixed by the GCC major versions it applies to
+# ("14,15: name"). Tests are named without the optimisation options.
+
+# Nested functions need an executable stack for their trampolines; the Linux test port's is not
+# executable, so they crash with a segmentation fault under qemu-arm
+gcc.c-torture/execute/20000822-1.c
+gcc.c-torture/execute/nestfunc-3.c
+gcc.c-torture/execute/nestfunc-5.c
+gcc.c-torture/execute/nestfunc-6.c
+# ... and these crash on GCC 14 and 15 but not on GCC 16 (not investigated why)
+14,15: gcc.c-torture/execute/921215-1.c
+14,15: gcc.c-torture/execute/931002-1.c
+14,15: gcc.c-torture/execute/nestfunc-1.c
+14,15: gcc.c-torture/execute/nestfunc-2.c
+
+# Tests that ask for -std=gnu89 or a C99 runtime check; rtoskit-libc's headers need C23
+# (restrict, attributes), so these cannot compile
+gcc.c-torture/execute/20030125-1.c
+gcc.c-torture/execute/920501-9.c
+gcc.c-torture/execute/930513-1.c
+
+# Old tests that are not C23-clean (implicit int, undeclared functions) in GCC 14's testsuite; rtoskit.specs
+# defaults to -std=gnu23, GCC 14's own default is gnu17. They pass with -std=gnu17.
+14: gcc.c-torture/execute/20010605-2.c
+14: gcc.c-torture/execute/20020404-1.c
+14: gcc.c-torture/execute/20030714-1.c
+14: gcc.c-torture/execute/20051012-1.c
+14: gcc.c-torture/execute/20190820-1.c
+14: gcc.c-torture/execute/920612-1.c
+14: gcc.c-torture/execute/930608-1.c
+14: gcc.c-torture/execute/comp-goto-1.c
+14: gcc.c-torture/execute/loop-9.c
+14: gcc.c-torture/execute/pr103209.c
+14: gcc.c-torture/execute/pr28289.c
+14: gcc.c-torture/execute/pr34982.c
+14: gcc.c-torture/execute/pr67037.c
+14: gcc.c-torture/execute/va-arg-2.c

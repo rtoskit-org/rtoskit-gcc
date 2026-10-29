@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#
+# Copyright (C) 2026 Red Rocket Computing, LLC
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# gcc-torture
+#
+# Runs GCC's own gcc.c-torture/execute tests (about 1700 self-checking programs, each at eight optimisation
+# levels, two of them with LTO) against an installed toolchain: DejaGnu compiles each with
+# --specs=rtoskit-linux.specs and runs it under qemu-arm. This exercises the compiler and libgcc on the
+# multilib the options select.
+#
+# Failures listed in tools/dejagnu/torture.xfail (tests that cannot pass in this environment, such as nested
+# functions that need an executable stack) are expected; any other FAIL or UNRESOLVED makes the exit
+# status non-zero.
+#
+# Usage: gcc-torture <toolchain directory> <output directory> [compile options] [-- <runtest test mask>]
+#   e.g. gcc-torture gcc-arm-none-eabi-16-2-0 /tmp/torture "-mcpu=cortex-m4 -mfloat-abi=hard"
+#        gcc-torture gcc-arm-none-eabi-16-2-0 /tmp/torture "-mcpu=cortex-m4" -- "execute.exp=2000*"
+#
+# The GCC testsuite comes from the toolchain's build tree, or from downloads/gcc-<version>.tar.xz.
+#
+# Created on: Oct 29, 2026
+#     Author: Stephen Street (stephen@redrocketcomputing.com)
+#
+
+set -u
+
+if [[ -z "${1:-}" || ! -x "$1/bin/arm-none-eabi-gcc" || -z "${2:-}" ]]; then
+	echo "usage: $0 <toolchain directory> <output directory> [compile options] [-- <test mask>]" >&2
+	exit 2
+fi
+for tool in runtest qemu-arm; do
+	command -v "${tool}" > /dev/null || { echo "${tool} is required (apt install dejagnu qemu-user)" >&2; exit 2; }
+done
+
+PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
+T=$(realpath "$1")
+out=$(realpath -m "$2")
+options=${3:-}
+mask="execute.exp"
+if [[ ${4:-} == "--" ]]; then mask=${5:-execute.exp}; fi
+
+version=$("${T}/bin/arm-none-eabi-gcc" -dumpfullversion)
+srcdir=$(ls -d "${PROJECT_ROOT}"/build/release/compilers/arm-none-eabi/gcc-"${version}"/.build/arm-none-eabi/src/gcc/gcc/testsuite 2> /dev/null | head -1)
+mkdir -p "${out}"
+if [[ -z ${srcdir} ]]; then
+	tarball=${PROJECT_ROOT}/downloads/gcc-${version}.tar.xz
+	[[ -f ${tarball} ]] || { echo "no GCC ${version} testsuite: build tree and ${tarball} are missing" >&2; exit 2; }
+	tar -xf "${tarball}" -C "${out}" "gcc-${version}/gcc/testsuite"
+	srcdir=${out}/gcc-${version}/gcc/testsuite
+fi
+
+# DejaGnu finds the board through a site file
+printf 'lappend boards_dir "%s"\n' "${PROJECT_ROOT}/tools/dejagnu/boards" > "${out}/site.exp"
+
+cd "${out}" || exit 2
+rm -f gcc.sum gcc.log
+DEJAGNU=${out}/site.exp RTOSKIT_FLAGS=${options} PATH=${T}/bin:${PATH} \
+	runtest --tool gcc --srcdir "${srcdir}" --tool_exec "${T}/bin/arm-none-eabi-gcc" --target arm-none-eabi \
+	--target_board rtoskit-qemu "${mask}" > run.out 2>&1
+
+if [[ ! -f gcc.sum ]]; then
+	echo "runtest produced no gcc.sum:" >&2
+	tail -5 run.out >&2
+	exit 2
+fi
+
+# Expected failures: the names, without the optimisation options
+xfail=${PROJECT_ROOT}/tools/dejagnu/torture.xfail
+sed -E 's/ +-O.*//; s/^(FAIL|UNRESOLVED): //' <(grep -E '^(FAIL|UNRESOLVED):' gcc.sum) | sort -u > unexpected.txt
+if [[ -f ${xfail} ]]; then
+	# Entries may be limited to GCC major versions: "14,15: name"
+	grep -vxFf <(awk -v major="${version%%.*}" '
+		{ sub(/#.*/, ""); gsub(/^[ \t]+|[ \t]+$/, ""); if ($0 == "") next }
+		/^[0-9,]+:/ {
+			i = index($0, ":"); versions = "," substr($0, 1, i - 1) ","; name = substr($0, i + 1); gsub(/^[ \t]+/, "", name)
+			if (index(versions, "," major ",")) print name
+			next
+		}
+		{ print }' "${xfail}") unexpected.txt > unexpected.new || true
+	mv unexpected.new unexpected.txt
+fi
+
+printf 'gcc %s [%s]: %d passed, %d failed, %d unresolved (%d unexpected)\n' "${version}" "${options:-default}" \
+	"$(grep -c '^PASS:' gcc.sum)" "$(grep -c '^FAIL:' gcc.sum)" "$(grep -c '^UNRESOLVED:' gcc.sum)" "$(wc -l < unexpected.txt)"
+if [[ -s unexpected.txt ]]; then
+	echo "unexpected failures (see ${out}/gcc.log):"
+	sed 's/^/    /' unexpected.txt
+	exit 1
+fi

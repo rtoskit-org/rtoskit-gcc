@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+#
+# Copyright (C) 2026 Red Rocket Computing, LLC
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# test-installed
+#
+# Builds rtoskit-libc's unit tests against an INSTALLED toolchain and nothing else: its headers and libraries
+# come in through --specs=rtoskit-linux.specs, with no in-tree include or library paths. Each test is built for
+# a set of cores, in the release and speed builds, and run under qemu-arm. This checks that what the toolchain
+# ships is what the library's own build produces.
+#
+# Only black-box tests can be built this way; a test that includes the library's internal headers (or the
+# Linux port's) is reported as SKIP. The exit status is non-zero if any test fails to build or run.
+#
+# Usage: test-installed [-j JOBS] [-k] <toolchain directory> [core ...]
+#   -j JOBS  run this many configurations at once (default: the number of CPUs)
+#   -k       keep the build directory
+#   core     any of: default v6m v7m v7em-nofp v7em-fp v7em-dp v8mm-nofp v8mm-fp (default: all)
+#
+# Created on: Oct 29, 2026
+#     Author: Stephen Street (stephen@redrocketcomputing.com)
+#
+
+set -u
+
+jobs=$(nproc)
+keep=
+while getopts "j:k" opt; do
+	case ${opt} in
+		j) jobs=${OPTARG} ;;
+		k) keep=y ;;
+		*) exit 2 ;;
+	esac
+done
+shift $((OPTIND - 1))
+
+if [[ -z "${1:-}" || ! -x "$1/bin/arm-none-eabi-gcc" ]]; then
+	echo "usage: $0 [-j JOBS] [-k] <toolchain directory> [core ...]" >&2
+	exit 2
+fi
+
+PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
+GCC=$(realpath "$1")/bin/arm-none-eabi-gcc
+shift
+UNIT=${PROJECT_ROOT}/external/rtoskit-libc/test/unit
+[[ -d ${UNIT} ]] || { echo "missing ${UNIT}: run make setup" >&2; exit 2; }
+command -v qemu-arm > /dev/null || { echo "qemu-arm is required" >&2; exit 2; }
+
+declare -A options=(
+	[default]=""
+	[v6m]="-mcpu=cortex-m0plus"
+	[v7m]="-mcpu=cortex-m3"
+	[v7em-nofp]="-mcpu=cortex-m4"
+	[v7em-fp]="-mcpu=cortex-m4 -mfloat-abi=hard"
+	[v7em-dp]="-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard"
+	[v8mm-nofp]="-mcpu=cortex-m33"
+	[v8mm-fp]="-mcpu=cortex-m33 -mfloat-abi=hard"
+)
+cores=("$@")
+[[ ${#cores[@]} -gt 0 ]] || cores=(default v6m v7m v7em-nofp v7em-fp v7em-dp v8mm-nofp v8mm-fp)
+
+work=$(mktemp -d)
+if [[ -z ${keep} ]]; then trap 'rm -rf "${work}"' EXIT; else echo "build directory: ${work}"; fi
+
+# One core, one build type: build and run every test; the result is in <dir>/summary
+run_config() { # run_config <core> <release|speed>
+	local core=$1 build=$2 dir=${work}/$1-$2 speed='' test extra limit status elf
+	mkdir -p "${dir}"
+	[[ ${build} == speed ]] && speed=--speed
+	: > "${dir}/summary"
+	for test in $(cd "${UNIT}" && ls -d ./*/ | tr -d './'); do
+		[[ ${test} == run-unit || ${test} == none ]] && continue
+		ls "${UNIT}/${test}"/*.c > /dev/null 2>&1 || continue
+		extra=$(grep -hE '(CFLAGS|LDFLAGS) \+= ' "${UNIT}/${test}/${test}.mk" | sed -E 's/^.*(CFLAGS|LDFLAGS) \+= //' | grep -vF '${' | tr '\n' ' ')
+		elf=${dir}/${test}.elf
+		# shellcheck disable=SC2086
+		if ! "${GCC}" ${options[${core}]} ${speed} --specs=rtoskit-linux.specs -Os -fno-builtin ${extra} -I"${UNIT}/${test}" \
+			"${UNIT}/${test}"/*.c -lm -o "${elf}" > "${dir}/${test}.build" 2>&1; then
+			if grep -qE "fatal error: .*(No such file|internal)|undefined reference to .__libc_|undeclared|does not support|impossible constraint|inconsistent operand constraints" "${dir}/${test}.build"; then
+				echo "SKIP ${test}" >> "${dir}/summary"
+			else
+				echo "BUILDFAIL ${test}: $(grep -m1 -E 'error|undefined' "${dir}/${test}.build" | cut -c1-140)" >> "${dir}/summary"
+			fi
+			continue
+		fi
+		limit=60
+		[[ -f ${UNIT}/${test}/${test}.timeout ]] && limit=$(< "${UNIT}/${test}/${test}.timeout")
+		if [[ -x ${UNIT}/${test}/${test}.run ]]; then
+			PROJECT_ROOT=${PROJECT_ROOT}/external/rtoskit-libc TARGET_RUNNER="qemu-arm -cpu max" timeout "${limit}" "${UNIT}/${test}/${test}.run" "${elf}" > "${dir}/${test}.log" 2>&1
+		else
+			timeout "${limit}" qemu-arm -cpu max "${elf}" > "${dir}/${test}.log" 2>&1
+		fi
+		status=$?
+		if [[ ${status} -eq 0 ]]; then echo "PASS ${test}" >> "${dir}/summary"; else echo "FAIL ${test} (status ${status})" >> "${dir}/summary"; fi
+	done
+}
+
+for core in "${cores[@]}"; do
+	[[ -v options[${core}] ]] || { echo "unknown core ${core}" >&2; exit 2; }
+	for build in release speed; do
+		while [[ $(jobs -rp | wc -l) -ge ${jobs} ]]; do wait -n; done
+		run_config "${core}" "${build}" &
+	done
+done
+wait
+
+bad=0
+printf '%-12s %-8s %5s %5s %9s %5s\n' core build pass fail buildfail skip
+for core in "${cores[@]}"; do
+	for build in release speed; do
+		s=${work}/${core}-${build}/summary
+		f=$(grep -c '^FAIL' "${s}")
+		b=$(grep -c '^BUILDFAIL' "${s}")
+		printf '%-12s %-8s %5d %5d %9d %5d\n' "${core}" "${build}" "$(grep -c '^PASS' "${s}")" "${f}" "${b}" "$(grep -c '^SKIP' "${s}")"
+		if [[ ${f} -ne 0 || ${b} -ne 0 ]]; then
+			bad=1
+			grep -E '^(FAIL|BUILDFAIL)' "${s}" | sed 's/^/    /'
+		fi
+	done
+done
+exit ${bad}

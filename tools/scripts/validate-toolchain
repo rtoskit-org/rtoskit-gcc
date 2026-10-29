@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+#
+# Copyright (C) 2026 Red Rocket Computing, LLC
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# validate-toolchain
+#
+# Smoke test of an installed toolchain: the multilibs, the core-to-multilib selection, the default TLS
+# model, gdb with Python, and that a threaded program using printf, sinf and thread_local links with every
+# multilib (release and speed builds) and runs under qemu-arm through the Linux test port.
+#
+# Usage: validate-toolchain <toolchain directory>      (the unpacked gcc-arm-none-eabi-<version>)
+#
+# Created on: Oct 29, 2026
+#     Author: Stephen Street (stephen@redrocketcomputing.com)
+#
+
+set -u
+
+if [[ -z "${1:-}" || ! -x "$1/bin/arm-none-eabi-gcc" ]]; then
+	echo "usage: $0 <toolchain directory>" >&2
+	exit 2
+fi
+
+PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
+T=$(realpath "$1")
+GCC=$T/bin/arm-none-eabi-gcc
+OBJDUMP=$T/bin/arm-none-eabi-objdump
+MAP=${PROJECT_ROOT}/compilers/arm-none-eabi/rtoskit/multilib.map
+work=$(mktemp -d)
+trap 'rm -rf "${work}"' EXIT
+
+failures=0
+pass() { echo "PASS $*"; }
+fail() { echo "FAIL $*"; failures=$((failures + 1)); }
+check() { # check <name> <expected> <actual>
+	if [[ "$2" == "$3" ]]; then pass "$1"; else fail "$1: expected '$2', got '$3'"; fi
+}
+
+echo "toolchain: $("${GCC}" --version | head -1)"
+
+# The multilibs GCC builds are exactly the ones in the map
+expected=$(sed -e 's/#.*//' "${MAP}" | awk 'NF { print $1 }' | sort | tr '\n' ' ')
+actual=$("${GCC}" -print-multi-lib | cut -d';' -f1 | sort | tr '\n' ' ')
+check "multilib list" "${expected}" "${actual}"
+
+# Which multilib a core selects
+select_check() { # select_check <options> <expected multilib>
+	# shellcheck disable=SC2086
+	check "select [$1]" "$2" "$("${GCC}" $1 -print-multi-directory)"
+}
+select_check "-mcpu=cortex-m0plus" thumb/v6-m/nofp
+select_check "-mcpu=cortex-m23" thumb/v6-m/nofp
+select_check "-mcpu=cortex-m3" thumb/v7-m/nofp
+select_check "-mcpu=cortex-m4" thumb/v7e-m/nofp
+select_check "-mcpu=cortex-m4 -mfloat-abi=softfp" thumb/v7e-m/nofp
+select_check "-mcpu=cortex-m4 -mfloat-abi=hard" thumb/v7e-m+fp/hard
+select_check "-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" thumb/v7e-m+dp/hard
+select_check "-mcpu=cortex-m33" thumb/v8-m.main/nofp
+select_check "-mcpu=cortex-m33 -mfloat-abi=hard" thumb/v8-m.main+fp/hard
+select_check "-mcpu=cortex-m55 -mfloat-abi=hard" thumb/v8-m.main+fp/hard
+
+# thread_local defaults to local-exec, and an explicit -ftls-model still wins
+printf 'extern _Thread_local int x;\nint f(void) { return x; }\n' > "${work}/tls.c"
+tls_relocs() { # tls_relocs [options]
+	# shellcheck disable=SC2086
+	"${GCC}" -mcpu=cortex-m4 -O2 $1 -c "${work}/tls.c" -o "${work}/tls.o" &&
+		"${OBJDUMP}" -r "${work}/tls.o" | grep -oE 'R_ARM_TLS_[A-Z0-9_]+' | sort -u | tr '\n' ' '
+}
+check "TLS default" "R_ARM_TLS_LE32 " "$(tls_relocs "")"
+check "TLS override" "R_ARM_TLS_IE32 " "$(tls_relocs "-ftls-model=initial-exec")"
+
+# gdb with Python
+check "gdb python" "ok" "$("$T/bin/arm-none-eabi-gdb" -batch -ex 'python print("ok")' 2>&1 | tail -1)"
+
+# A threaded program: link with every multilib, release and speed, then run it under qemu
+cat > "${work}/thr.c" <<'EOF'
+#include <stdio.h>
+#include <threads.h>
+#include <math.h>
+thread_local int tls = 1;
+static int worker(void *arg)
+{
+	tls += (int)(long)arg;
+	printf("thread tls=%d sinf=%.6f\n", tls, (double)sinf(1.0f));
+	return tls;
+}
+int main(void)
+{
+	thrd_t t;
+	int res;
+	thrd_create(&t, worker, (void *)41);
+	thrd_join(t, &res);
+	printf("main tls=%d joined=%d\n", tls, res);
+	return 0;
+}
+EOF
+want="thread tls=42 sinf=0.841471 main tls=1 joined=42"
+have_qemu=y
+command -v qemu-arm > /dev/null || { have_qemu=n; echo "note: qemu-arm not found, programs are linked but not run"; }
+
+for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
+	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
+	for speed in "" "--speed"; do
+		name="threads [${options} ${speed}]"
+		# shellcheck disable=SC2086
+		if ! "${GCC}" ${options} ${speed} --specs=rtoskit-linux.specs -Os "${work}/thr.c" -o "${work}/thr.elf" 2> "${work}/err.txt"; then
+			fail "${name}: $(head -1 "${work}/err.txt")"
+			continue
+		fi
+		if [[ ${have_qemu} == y ]]; then
+			got=$(timeout 30 qemu-arm -cpu max "${work}/thr.elf" 2>&1 | tr '\n' ' ' | sed 's/ $//')
+			check "${name}" "${want}" "${got}"
+		else
+			pass "${name} (linked)"
+		fi
+	done
+done
+
+# The library variants and the port choose the expected archives
+archive_check() { # archive_check <options> <expected archives>
+	printf '#include <stdio.h>\nint main(void) { printf("%%d\\n", 42); return 0; }\n' > "${work}/pf.c"
+	# shellcheck disable=SC2086
+	got=$("${GCC}" -mcpu=cortex-m4 -mfloat-abi=hard --specs=rtoskit.specs $1 -Os "${work}/pf.c" -o "${work}/pf.elf" -Wl,--trace 2>&1 |
+		grep -oE 'thumb/[^ ]*lib(c|rtos)[^ ]*\.a' | sed -E 's|.*/||' | sort -u | tr '\n' ' ')
+	check "archives [$1]" "$2" "${got}"
+}
+archive_check "" "libc.a librtos-none.a "
+archive_check "--libc=minimal-printf" "libc-minimal-printf.a librtos-none.a "
+archive_check "--libc=nofloat" "libc-nofloat.a librtos-none.a "
+archive_check "--libc=tinymalloc" "libc-tinymalloc.a librtos-none.a "
+
+echo
+if [[ ${failures} -eq 0 ]]; then
+	echo "validate-toolchain: all checks passed"
+else
+	echo "validate-toolchain: ${failures} check(s) failed"
+fi
+exit $((failures > 0))
