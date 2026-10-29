@@ -30,6 +30,15 @@ else
 MANUALS_LINE := CT_BUILD_MANUALS=y
 endif
 
+# crosstool-NG's progress bar redraws one line with a spinner: useful on a terminal, noise in a log. By default
+# it is on only when stderr is a terminal; PROGRESS_BAR=y or n overrides that.
+PROGRESS_BAR ?= $(if $(shell [ -t 2 ] && echo y),y,n)
+ifeq (${PROGRESS_BAR},n)
+PROGRESS_LINE := \# CT_LOG_PROGRESS_BAR is not set
+else
+PROGRESS_LINE := CT_LOG_PROGRESS_BAR=y
+endif
+
 CROSSTOOL_NG_SOURCE := ${PROJECT_ROOT}/external/crosstool-ng
 RTOSKIT_LIBC_SOURCE := ${PROJECT_ROOT}/external/rtoskit-libc
 
@@ -115,6 +124,7 @@ ${CURDIR}/gcc-%/.config: ${TOOLCHAIN_INPUTS}
 	    -e 's|@PATCH_DIR@|${PATCH_DIR}|g' \
 	    -e 's|@PROJECT_ROOT@|${PROJECT_ROOT}|g' \
 	    -e 's|@BUILD_MANUALS@|${MANUALS_LINE}|g' \
+	    -e 's|@PROGRESS_BAR@|${PROGRESS_LINE}|g' \
 	    ${SOURCE_DIR}/arm-none-eabi.defconfig.in > $(@D)/defconfig
 	cd $(@D) && ${CT_NG} defconfig DEFCONFIG=$(@D)/defconfig
 	grep -q '^CT_GCC_VERSION="$*"$$' $@ || { echo "crosstool-NG $$(cat ${CURDIR}/crosstool-ng.rev) has no GCC $* (it selected $$(grep '^CT_GCC_VERSION=' $@)); see tools/scripts/gcc-releases" >&2; exit 1; }
