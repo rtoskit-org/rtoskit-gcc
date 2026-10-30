@@ -105,8 +105,27 @@ They need `qemu-arm` (`qemu-user`), and `gcc-torture` also `runtest` (`dejagnu`)
 
 `.github/workflows/ci.yml` builds every version in `versions.inc` from scratch, then runs `validate-toolchain` and `test-installed` on it, and uploads the toolchain. The GCC torture tests run on request (*Run workflow*, *torture*).
 
-- **Variable `CI_RUNNER`** (optional): the label of a larger runner. A build uses about 15 GB of disk and takes an hour or more on a standard runner.
+- **Variable `CI_RUNNER`** (optional): the label of the runner that builds the toolchains. A build uses about 15 GB of
+  disk and takes 1¼ to 1¾ hours on a standard GitHub runner (2 cores), against about 11 minutes on 16 cores.
+  GitHub's larger hosted runners need an organization, so a personal repository uses a self-hosted runner.
 - The build uses `BUILD_MANUALS=n` (no PDF or HTML manuals), which is also available locally.
+
+### A self-hosted runner
+
+1. On the machine, install the [dependencies](#dependencies), including GNU make 4.4, `qemu-user` and `dejagnu`.
+   The workflow installs nothing on a self-hosted runner: its *Check the self-hosted runner* step lists whatever is
+   missing and fails early.
+2. In the repository, *Settings*, *Actions*, *Runners*, *New self-hosted runner* gives the download and
+   `./config.sh --url … --token … --labels rtoskit-gcc` commands (the token is single use). Run them as a dedicated
+   user, not your own, because a job can do whatever that user can. Install the service with
+   `sudo ./svc.sh install <user>` and `sudo ./svc.sh start` so it survives a reboot.
+3. Set the variable: *Settings*, *Secrets and variables*, *Actions*, *Variables*, `CI_RUNNER` = `rtoskit-gcc`
+   (or `gh variable set CI_RUNNER --body rtoskit-gcc`). Unset it to go back to GitHub's runners.
+
+The three toolchain jobs queue and run one after another on a single runner, each using all the cores, so a full run
+takes about three builds plus the validation (roughly 45 minutes on 16 cores). Each job deletes its 15 GB build tree
+when it ends. Keep the repository private, or require approval for outside contributors' workflows: a pull request
+from a fork would run its code on your machine.
 
 ## Updating the GCC versions
 
