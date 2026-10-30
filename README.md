@@ -11,8 +11,9 @@ Each toolchain has:
 - **GDB 17** with Python.
 - **`local-exec` as the default TLS model**, which rtoskit-libc's `thread_local` needs. `-ftls-model=` on the
   command line still overrides it.
-- **C only.** C++ is tracked in [#2](https://github.com/sgstreet/rtoskit-gcc/issues/2) and in
-  rtoskit-libc's C++ issue.
+- **C only.** C++ is tracked in [#7](https://github.com/sgstreet/rtoskit-gcc/issues/7) (the toolchain),
+  [#2](https://github.com/sgstreet/rtoskit-gcc/issues/2) (the thread model) and
+  [rtoskit-libc#98](https://github.com/sgstreet/rtoskit-libc/issues/98) (the library).
 
 ## Dependencies
 
