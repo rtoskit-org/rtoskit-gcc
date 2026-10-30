@@ -10,7 +10,8 @@
 #
 # Smoke test of an installed toolchain: the multilibs, the core-to-multilib selection, the default TLS
 # model, gdb with Python, and that a threaded program using printf, sinf and thread_local links with every
-# multilib (release and speed builds) and runs under qemu-arm through the Linux test port.
+# multilib (release and speed builds) and runs under qemu-arm through the Linux test port, and a C++ program
+# (constructors, exceptions, RTTI, thread_local destructors) does the same.
 #
 # Usage: validate-toolchain <toolchain directory>      (the unpacked gcc-arm-none-eabi-<version>)
 #
@@ -114,6 +115,64 @@ for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=
 		if [[ ${have_qemu} == y ]]; then
 			got=$(timeout 30 qemu-arm -cpu max "${work}/thr.elf" 2>&1 | tr '\n' ' ' | sed 's/ $//')
 			check "${name}" "${want}" "${got}"
+		else
+			pass "${name} (linked)"
+		fi
+	done
+done
+
+# C++ (the freestanding libstdc++ only): static constructors and destructors in order, new/delete, RTTI, an
+# exception, std::atomic, and thread_local objects with destructors, in the main thread and in a thread. The
+# destructors run through rtoskit-libc's __cxa_atexit and __cxa_thread_atexit, not libsupc++'s own.
+cat > "${work}/cxx.cc" <<'EOF'
+#include <stdio.h>
+#include <threads.h>
+#include <atomic>
+#include <array>
+struct S {
+	const char *n;
+	S(const char *n) : n(n) { printf("ctor %s\n", n); }
+	~S() { printf("dtor %s\n", n); }
+};
+static S a("a");
+struct B { virtual ~B() {} virtual int f() const { return 1; } };
+struct D : B { int f() const override { return 2; } };
+static thread_local S tl("tl-main");
+static int worker(void *) { static thread_local S t("tl-thread"); return t.n[0] == 't' ? 0 : 1; }
+struct Ex { int v; };
+static int thrower(int x) { if (x) throw Ex{x}; return 0; }
+static std::atomic<int> counter{0};
+int main()
+{
+	S b("b");
+	B *p = new D;
+	printf("f=%d rtti=%d\n", p->f(), dynamic_cast<D *>(p) != nullptr);
+	delete p;
+	try { thrower(42); } catch (const Ex &e) { printf("caught %d\n", e.v); }
+	std::array<int, 3> r{1, 2, 3};
+	counter += r[1];
+	thrd_t t;
+	int res = -1;
+	thrd_create(&t, worker, nullptr);
+	thrd_join(t, &res);
+	printf("worker=%d counter=%d tl=%s\n", res, counter.load(), tl.n);
+	return 0;
+}
+EOF
+cxx_want="ctor a ctor b f=2 rtti=1 caught 42 ctor tl-thread dtor tl-thread ctor tl-main worker=0 counter=2 tl=tl-main dtor b dtor tl-main dtor a"
+GXX="${GCC%gcc}g++"
+for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
+	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
+	for speed in "" "--speed"; do
+		name="c++ [${options} ${speed}]"
+		# shellcheck disable=SC2086
+		if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -Wall -Werror "${work}/cxx.cc" -o "${work}/cxx.elf" 2> "${work}/err.txt"; then
+			fail "${name}: $(head -1 "${work}/err.txt")"
+			continue
+		fi
+		if [[ ${have_qemu} == y ]]; then
+			got=$(timeout 30 qemu-arm -cpu max "${work}/cxx.elf" 2>&1 | tr '\n' ' ' | sed 's/ $//')
+			check "${name}" "${cxx_want}" "${got}"
 		else
 			pass "${name} (linked)"
 		fi

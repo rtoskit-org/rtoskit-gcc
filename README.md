@@ -11,9 +11,12 @@ Each toolchain has:
 - **GDB 17** with Python.
 - **`local-exec` as the default TLS model**, which rtoskit-libc's `thread_local` needs. `-ftls-model=` on the
   command line still overrides it.
-- **C only.** C++ is tracked in [#7](https://github.com/sgstreet/rtoskit-gcc/issues/7) (the toolchain),
-  [#2](https://github.com/sgstreet/rtoskit-gcc/issues/2) (the thread model) and
-  [rtoskit-libc#98](https://github.com/sgstreet/rtoskit-libc/issues/98) (the library).
+- **C and freestanding C++.** `arm-none-eabi-g++` builds against rtoskit-libc's headers and `__cxa_atexit` /
+  `__cxa_thread_atexit`, with exceptions, RTTI and `thread_local` destructors, and the freestanding part of
+  libstdc++ (`<new>`, `<atomic>`, `<array>`, `<span>`, `<optional>`, `<variant>`, `<type_traits>`, ...). The hosted
+  library (`<string>`, `<vector>`, `<iostream>`, `<cstdio>`, `<cstring>`, `<cmath>`) and `std::thread` are not
+  there yet: [#7](https://github.com/sgstreet/rtoskit-gcc/issues/7) (the toolchain),
+  [#2](https://github.com/sgstreet/rtoskit-gcc/issues/2) (the thread model).
 
 ## Dependencies
 
@@ -69,7 +72,8 @@ full `rmprofile` set is tracked in [#3](https://github.com/sgstreet/rtoskit-gcc/
 
 `--specs=rtoskit.specs` (installed in the sysroot `lib/`):
 
-- compiles with only rtoskit-libc's headers, as `-std=gnu23` unless you pass your own `-std`;
+- compiles with only rtoskit-libc's headers (and, for C++, libstdc++'s), as `-std=gnu23` for C unless you pass your
+  own `-std`;
 - links `-lc` and `-lrtos-none` from the multilib that matches your `-mcpu`/`-march`/`-mfloat-abi`, with
   `--gc-sections`;
 - drops the toolchain's start files, so your startup code and linker script provide `_start`, the memory layout and

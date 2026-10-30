@@ -6,7 +6,17 @@
 %rename cc1 rtoskit_cc1
 
 *cc1:
-%{!std=*:-std=gnu23} %(rtoskit_cc1)
+%{!std=*:%{!.cc:%{!.cp:%{!.cxx:%{!.cpp:%{!.CPP:%{!.c++:%{!.C:%{!.ii:%{!xc++*:-std=gnu23}}}}}}}}}} %(rtoskit_cc1)
+
+%rename cc1plus rtoskit_cc1plus
+
+*cc1plus:
+-isystem %:find-file(../include/c++/@GCC_VERSION@) -isystem %:find-file(../include/c++/@GCC_VERSION@/arm-none-eabi/%M) -isystem %:find-file(../include/c++/@GCC_VERSION@/backward) %(rtoskit_cc1plus)
+
+%rename link_gcc_c_sequence rtoskit_link_gcc_c_sequence
+
+*link_gcc_c_sequence:
+--start-group %{!nolibc:%L} %G --end-group
 
 %rename link rtoskit_link
 

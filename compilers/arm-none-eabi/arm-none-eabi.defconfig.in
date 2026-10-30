@@ -24,8 +24,10 @@ CT_LIBC_RTOSKIT_SPECS="@SOURCE_DIR@/rtoskit/rtoskit.specs @SOURCE_DIR@/rtoskit/r
 CT_GCC_V_@GCC_MAJOR@=y
 CT_CC_GCC_MULTILIB_LIST="@t-rtoskit"
 CT_CC_GCC_CORE_EXTRA_CONFIG_ARRAY="'--with-specs=%{!ftls-model=*:-ftls-model=local-exec}' --with-arch=armv6s-m --with-mode=thumb --with-float=soft"
-CT_CC_GCC_EXTRA_CONFIG_ARRAY="'--with-specs=%{!ftls-model=*:-ftls-model=local-exec}' --with-arch=armv6s-m --with-mode=thumb --with-float=soft --without-headers"
+CT_CC_GCC_EXTRA_CONFIG_ARRAY="'--with-specs=%{!ftls-model=*:-ftls-model=local-exec}' --with-arch=armv6s-m --with-mode=thumb --with-float=soft --disable-wchar_t --without-headers"
 CT_CC_GCC_CONFIG_TLS=y
-# CT_CC_GCC_LIBSTDCXX is not set
-# CT_CC_LANG_CXX is not set
+CT_CC_LANG_CXX=y
+CT_CC_GCC_LIBSTDCXX=y
+CT_CC_GCC_LIBSTDCXX_HOSTED_DISABLE=y
+CT_CC_GCC_LIBSTDCXX_TARGET_CXXFLAGS="-D_GLIBCXX_HAVE___CXA_THREAD_ATEXIT=1"
 CT_DEBUG_GDB=y
