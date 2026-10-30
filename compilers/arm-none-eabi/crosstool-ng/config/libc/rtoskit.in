@@ -3,6 +3,7 @@
 ## depends on BARE_METAL && ARCH_ARM
 ## select LIBC_SUPPORT_THREADS_NONE
 ## select CC_CORE_NEEDED
+## select LIBC_PROVIDES_CXA_ATEXIT
 
 ## help rtoskit-libc is an ISO C23 C library for small embedded systems,
 ## help bound to an RTOS through a link-time interface (the __rtos_* port

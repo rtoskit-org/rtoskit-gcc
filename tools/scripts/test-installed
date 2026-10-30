@@ -45,6 +45,7 @@ fi
 
 PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 GCC=$(realpath "$1")/bin/arm-none-eabi-gcc
+GXX=${GCC%gcc}g++
 shift
 UNIT=${PROJECT_ROOT}/external/rtoskit-libc/test/unit
 [[ -d ${UNIT} ]] || { echo "missing ${UNIT}: run make setup" >&2; exit 2; }
@@ -66,7 +67,31 @@ cores=("$@")
 work=$(mktemp -d)
 if [[ -z ${keep} ]]; then trap 'rm -rf "${work}"' EXIT; else echo "build directory: ${work}"; fi
 
-# One core, one build type: build and run every test; the result is in <dir>/summary
+# Build one unit test into <elf>: the C sources in one command, or, for a C++ test, each source on its own, as C++23
+# unless the test's .mk gives that object another -std
+build_test() { # build_test <core> <speed> <test> <extra flags> <elf>
+	local core=$1 speed=$2 test=$3 extra=$4 elf=$5 src name std objs=()
+	if ls "${UNIT}/${test}"/*.c > /dev/null 2>&1; then
+		# shellcheck disable=SC2086
+		"${GCC}" ${options[${core}]} ${speed} --specs=rtoskit-linux.specs -Os -fno-builtin ${extra} -I"${UNIT}/${test}" \
+			"${UNIT}/${test}"/*.c -lm -o "${elf}"
+		return
+	fi
+	for src in "${UNIT}/${test}"/*.cpp; do
+		name=$(basename "${src}" .cpp)
+		std=c++23
+		grep -qE "/${name}\.o: CXXFLAGS \+= -std=c\+\+17" "${UNIT}/${test}/${test}.mk" && std=c++17
+		# shellcheck disable=SC2086
+		"${GXX}" ${options[${core}]} ${speed} --specs=rtoskit-linux.specs -Os -fno-builtin -std=${std} -Wall -Wextra -Werror ${extra} \
+			-I"${UNIT}/${test}" -c "${src}" -o "${elf%.elf}-${name}.o" || return 1
+		objs+=("${elf%.elf}-${name}.o")
+	done
+	# shellcheck disable=SC2086
+	"${GXX}" ${options[${core}]} ${speed} --specs=rtoskit-linux.specs "${objs[@]}" -lm -o "${elf}"
+}
+
+# One core, one build type: build and run every test; the result is in <dir>/summary. The tests run in <dir>, so the
+# files some of them create (stdio) cannot collide with those of the configurations running at the same time.
 run_config() { # run_config <core> <release|speed>
 	local core=$1 build=$2 dir=${work}/$1-$2 speed='' test extra limit status elf
 	mkdir -p "${dir}"
@@ -74,12 +99,10 @@ run_config() { # run_config <core> <release|speed>
 	: > "${dir}/summary"
 	for test in $(cd "${UNIT}" && ls -d ./*/ | tr -d './'); do
 		[[ ${test} == run-unit || ${test} == none ]] && continue
-		ls "${UNIT}/${test}"/*.c > /dev/null 2>&1 || continue
+		compgen -G "${UNIT}/${test}/*.c" > /dev/null || compgen -G "${UNIT}/${test}/*.cpp" > /dev/null || continue
 		extra=$(grep -hE '(CFLAGS|LDFLAGS) \+= ' "${UNIT}/${test}/${test}.mk" | sed -E 's/^.*(CFLAGS|LDFLAGS) \+= //' | grep -vF '${' | tr '\n' ' ')
 		elf=${dir}/${test}.elf
-		# shellcheck disable=SC2086
-		if ! "${GCC}" ${options[${core}]} ${speed} --specs=rtoskit-linux.specs -Os -fno-builtin ${extra} -I"${UNIT}/${test}" \
-			"${UNIT}/${test}"/*.c -lm -o "${elf}" > "${dir}/${test}.build" 2>&1; then
+		if ! build_test "${core}" "${speed}" "${test}" "${extra}" "${elf}" > "${dir}/${test}.build" 2>&1; then
 			if grep -qE "fatal error: .*(No such file|internal)|undefined reference to .__libc_|undeclared|does not support|impossible constraint|inconsistent operand constraints" "${dir}/${test}.build"; then
 				echo "SKIP ${test}" >> "${dir}/summary"
 			else
@@ -90,9 +113,9 @@ run_config() { # run_config <core> <release|speed>
 		limit=60
 		[[ -f ${UNIT}/${test}/${test}.timeout ]] && limit=$(< "${UNIT}/${test}/${test}.timeout")
 		if [[ -x ${UNIT}/${test}/${test}.run ]]; then
-			PROJECT_ROOT=${PROJECT_ROOT}/external/rtoskit-libc TARGET_RUNNER="qemu-arm -cpu max" timeout "${limit}" "${UNIT}/${test}/${test}.run" "${elf}" > "${dir}/${test}.log" 2>&1
+			(cd "${dir}" && PROJECT_ROOT=${PROJECT_ROOT}/external/rtoskit-libc TARGET_RUNNER="qemu-arm -cpu max" timeout "${limit}" "${UNIT}/${test}/${test}.run" "${elf}") > "${dir}/${test}.log" 2>&1
 		else
-			timeout "${limit}" qemu-arm -cpu max "${elf}" > "${dir}/${test}.log" 2>&1
+			(cd "${dir}" && timeout "${limit}" qemu-arm -cpu max "${elf}") > "${dir}/${test}.log" 2>&1
 		fi
 		status=$?
 		if [[ ${status} -eq 0 ]]; then echo "PASS ${test}" >> "${dir}/summary"; else echo "FAIL ${test} (status ${status})" >> "${dir}/summary"; fi

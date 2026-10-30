@@ -100,7 +100,8 @@ rtoskit_main()
     CT_EndStep
 }
 
-# The spec files and the Linux test port's linker script fragment
+# The spec files and the Linux test port's linker script fragment. @GCC_VERSION@ in a spec file becomes the GCC
+# version: a spec cannot build a libstdc++ include path from %(version), which ends in a space
 rtoskit_post_cc()
 {
     local spec
@@ -108,6 +109,7 @@ rtoskit_post_cc()
     CT_DoStep INFO "Installing C library spec files"
     for spec in ${CT_LIBC_RTOSKIT_SPECS}; do
         CT_DoExecLog ALL install -m 644 "${spec}" "${CT_SYSROOT_DIR}/lib/"
+        CT_DoExecLog ALL sed -i -e "s|@GCC_VERSION@|${CT_GCC_VERSION}|g" "${CT_SYSROOT_DIR}/lib/${spec##*/}"
     done
     if [ -f "${CT_SRC_DIR}/rtoskit/port/linux/arm/headers.ld" ]; then
         CT_DoExecLog ALL install -m 644 "${CT_SRC_DIR}/rtoskit/port/linux/arm/headers.ld" \
