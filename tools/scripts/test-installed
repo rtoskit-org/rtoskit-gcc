@@ -67,13 +67,13 @@ cores=("$@")
 work=$(mktemp -d)
 if [[ -z ${keep} ]]; then trap 'rm -rf "${work}"' EXIT; else echo "build directory: ${work}"; fi
 
-# Build one unit test into <elf>: the C sources in one command, or, for a C++ test, each source on its own, as C++23
+# Build one unit test into <elf>: the C sources in one command as strict C23, as the library builds them, or, for a C++ test, each source on its own, as C++23
 # unless the test's .mk gives that object another -std
 build_test() { # build_test <core> <speed> <test> <extra flags> <elf>
 	local core=$1 speed=$2 test=$3 extra=$4 elf=$5 src name std objs=()
 	if ls "${UNIT}/${test}"/*.c > /dev/null 2>&1; then
 		# shellcheck disable=SC2086
-		"${GCC}" ${options[${core}]} ${speed} --specs=rtoskit-linux.specs -Os -fno-builtin ${extra} -I"${UNIT}/${test}" \
+		"${GCC}" ${options[${core}]} ${speed} --specs=rtoskit-linux.specs -Os -fno-builtin -std=c23 ${extra} -I"${UNIT}/${test}" \
 			"${UNIT}/${test}"/*.c -lm -o "${elf}"
 		return
 	fi
