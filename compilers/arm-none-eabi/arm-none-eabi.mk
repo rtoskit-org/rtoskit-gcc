@@ -66,10 +66,13 @@ CT_NG_OVERLAY := $(shell find ${SOURCE_DIR}/crosstool-ng -type f) $(wildcard ${C
 PATCH_DIR := ${CURDIR}/patches
 T_RTOSKIT_PATCH := ${PATCH_DIR}/gcc/0001-arm-add-t-rtoskit-multilib-fragment.patch
 
+# The GCC patches kept in the source tree, applied to every version
+GCC_PATCHES := $(patsubst ${SOURCE_DIR}/gcc-patches/%,${PATCH_DIR}/gcc/%,$(wildcard ${SOURCE_DIR}/gcc-patches/*.patch))
+
 # A change of either submodule's commit rebuilds what depends on it
 REVISIONS := ${CURDIR}/crosstool-ng.rev ${CURDIR}/rtoskit-libc.rev
 
-TOOLCHAIN_INPUTS := ${SOURCE_DIR}/arm-none-eabi.defconfig.in ${T_RTOSKIT_PATCH} ${CT_NG} ${CURDIR}/rtoskit-libc.rev \
+TOOLCHAIN_INPUTS := ${SOURCE_DIR}/arm-none-eabi.defconfig.in ${T_RTOSKIT_PATCH} ${GCC_PATCHES} ${CT_NG} ${CURDIR}/rtoskit-libc.rev \
 	${SOURCE_DIR}/rtoskit/multilib.map ${SOURCE_DIR}/rtoskit/rtoskit.specs ${SOURCE_DIR}/rtoskit/rtoskit-linux.specs
 
 toolchain-name = gcc-arm-none-eabi-$(subst .,-,${1})
@@ -114,6 +117,10 @@ ${T_RTOSKIT_PATCH}: ${SOURCE_DIR}/t-rtoskit
 		echo "@@ -0,0 +1,$$(wc -l < ${<}) @@"; \
 		sed 's/^/+/' ${<}; \
 	} > ${@}
+
+${PATCH_DIR}/gcc/%.patch: ${SOURCE_DIR}/gcc-patches/%.patch
+	mkdir -p $(@D)
+	cp ${<} ${@}
 
 # One crosstool-NG work directory per GCC version: gcc-<version>/
 ${CURDIR}/gcc-%/.config: ${TOOLCHAIN_INPUTS}
