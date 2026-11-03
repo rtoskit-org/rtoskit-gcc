@@ -7,7 +7,9 @@ tables; with neither, the generic cross configuration needs a linkable target.
 --with-rtoskit-libc selects config/os/generic, which needs only the ISO
 <ctype.h> functions, and defines what rtoskit-libc provides: the float math
 functions and their long double forms, strtof, aligned_alloc, quick_exit and
-at_quick_exit, thread-local storage, S_ISREG, <sys/types.h> and <unistd.h>.
+at_quick_exit, thread-local storage, S_ISREG, <sys/types.h>, <inttypes.h>, <fcntl.h> and <unistd.h>.
+The header probes compile as C in the compiler's default dialect, which before GCC 15 cannot
+parse the C23-only <inttypes.h> or <fcntl.h>.
 Names it lacks (memalign, link, setenv, sleep, ...) stay undefined.
 
 The patch is the same for configure.ac and the generated configure, so no
@@ -16,7 +18,7 @@ autoconf run is needed. It applies to GCC 14, 15 and 16.
 diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
 --- a/libstdc++-v3/configure
 +++ b/libstdc++-v3/configure
-@@ -27525,7 +27525,121 @@
+@@ -27525,7 +27525,125 @@
  
    # First, test for "known" system libraries.  We may be using newlib even
    # on a hosted environment.
@@ -85,6 +87,10 @@ diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
 +
 +    $as_echo "#define HAVE_SYS_TYPES_H 1" >>confdefs.h
 +
++    $as_echo "#define HAVE_INTTYPES_H 1" >>confdefs.h
++
++    $as_echo "#define HAVE_FCNTL_H 1" >>confdefs.h
++
 +    $as_echo "#define HAVE_UNISTD_H 1" >>confdefs.h
 +
 +    $as_echo "#define HAVE_S_ISREG 1" >>confdefs.h
@@ -142,7 +148,7 @@ diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
 diff -ruN a/libstdc++-v3/configure.ac b/libstdc++-v3/configure.ac
 --- a/libstdc++-v3/configure.ac
 +++ b/libstdc++-v3/configure.ac
-@@ -338,7 +338,66 @@
+@@ -338,7 +338,68 @@
  
    # First, test for "known" system libraries.  We may be using newlib even
    # on a hosted environment.
@@ -181,6 +187,8 @@ diff -ruN a/libstdc++-v3/configure.ac b/libstdc++-v3/configure.ac
 +    AC_DEFINE(HAVE_AT_QUICK_EXIT)
 +    AC_DEFINE(HAVE_QUICK_EXIT)
 +    AC_DEFINE(HAVE_SYS_TYPES_H)
++    AC_DEFINE(HAVE_INTTYPES_H)
++    AC_DEFINE(HAVE_FCNTL_H)
 +    AC_DEFINE(HAVE_UNISTD_H)
 +    AC_DEFINE(HAVE_S_ISREG)
 +    AC_DEFINE(HAVE_ACOSL)
