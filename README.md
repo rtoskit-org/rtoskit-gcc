@@ -11,12 +11,12 @@ Each toolchain has:
 - **GDB 17** with Python.
 - **`local-exec` as the default TLS model**, which rtoskit-libc's `thread_local` needs. `-ftls-model=` on the
   command line still overrides it.
-- **C and freestanding C++.** `arm-none-eabi-g++` builds against rtoskit-libc's headers and `__cxa_atexit` /
-  `__cxa_thread_atexit`, with exceptions, RTTI and `thread_local` destructors, and the freestanding part of
-  libstdc++ (`<new>`, `<atomic>`, `<array>`, `<span>`, `<optional>`, `<variant>`, `<type_traits>`, ...). The hosted
-  library (`<string>`, `<vector>`, `<iostream>`, `<cstdio>`, `<cstring>`, `<cmath>`) and `std::thread` are not
-  there yet: [#7](https://github.com/sgstreet/rtoskit-gcc/issues/7) (the toolchain),
-  [#2](https://github.com/sgstreet/rtoskit-gcc/issues/2) (the thread model).
+- **C and C++.** `arm-none-eabi-g++` builds against rtoskit-libc's headers and `__cxa_atexit` /
+  `__cxa_thread_atexit`, with exceptions, RTTI, `thread_local` destructors and a hosted libstdc++ (`<string>`,
+  `<vector>`, `<iostream>`, `<regex>`, `<ranges>`, `<chrono>`, `std::println`, ...), without wide characters.
+  libstdc++ is configured by `compilers/arm-none-eabi/gcc-patches/0002-libstdcxx-add-rtoskit-libc-os-port.patch`
+  (`--with-rtoskit-libc`). Not there yet: `std::thread` and the other threading classes
+  ([#2](https://github.com/sgstreet/rtoskit-gcc/issues/2)), and `std::filesystem` does nothing useful.
 
 ## Dependencies
 
@@ -136,6 +136,7 @@ If the pinned crosstool-NG does not package a version, `--ct-ng=latest` (or `--c
 | `compilers/arm-none-eabi/arm-none-eabi.defconfig.in` | The crosstool-NG configuration, shared by every version |
 | `compilers/arm-none-eabi/crosstool-ng/` | Laid over a copy of the crosstool-NG submodule: the `rtoskit` libc backend |
 | `compilers/arm-none-eabi/t-rtoskit`, `rtoskit/` | The multilib list, its map and the spec files |
+| `compilers/arm-none-eabi/gcc-patches/` | GCC patches applied to every version (the libstdc++ OS port) |
 | `external/` | Submodules: crosstool-NG and rtoskit-libc |
 | `tools/scripts/` | `gcc-releases` (versions), `validate-toolchain`, `test-installed`, `gcc-torture` (validation) |
 | `tools/dejagnu/` | The DejaGnu board for `gcc-torture` and its expected failures |

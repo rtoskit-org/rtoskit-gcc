@@ -179,6 +179,90 @@ for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=
 	done
 done
 
+# The hosted libstdc++: containers, strings, algorithms and ranges, <functional>, <optional> and <variant>, <regex>,
+# <random>, <chrono>, string streams, exceptions through the library, and iostream and std::println on the C library's
+# stdio.
+cat > "${work}/hosted.cc" <<'EOF'
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <functional>
+#include <iostream>
+#include <numeric>
+#include <optional>
+#include <print>
+#include <random>
+#include <ranges>
+#include <regex>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <variant>
+#include <vector>
+static int failed;
+#define CHECK(c) do { if (!(c)) { std::printf("FAIL %s\n", #c); failed++; } } while (0)
+int main()
+{
+	std::vector<int> v(20);
+	std::iota(v.begin(), v.end(), 1);
+	std::ranges::reverse(v);
+	CHECK(v.front() == 20);
+	int sum = 0;
+	for (int x : v | std::views::filter([](int x) { return x % 2 == 0; }) | std::views::transform([](int x) { return x * x; }))
+		sum += x;
+	CHECK(sum == 1540);
+	std::unordered_map<std::string, int> m{{"one", 1}, {"two", 2}};
+	CHECK(m["two"] == 2);
+	std::function<int(int)> f = [&](int x) { return x + m["one"]; };
+	CHECK(f(41) == 42);
+	std::optional<std::string> o = "hi";
+	CHECK(o && *o == "hi");
+	std::variant<int, std::string> var = std::string("x");
+	CHECK(std::holds_alternative<std::string>(var));
+	try { throw std::runtime_error("boom"); } catch (const std::exception &e) { CHECK(std::string(e.what()) == "boom"); }
+	try { (void)std::vector<int>().at(3); } catch (const std::out_of_range &) { std::puts("out_of_range"); }
+	std::mt19937 g(42);
+	CHECK(g() == 1608637542u);
+	std::regex re("a(b+)c");
+	std::smatch sm;
+	std::string text = "xxabbbcxx";
+	CHECK(std::regex_search(text, sm, re) && sm[1] == "bbb");
+	auto t0 = std::chrono::steady_clock::now();
+	CHECK(std::chrono::steady_clock::now() >= t0);
+	std::ostringstream os;
+	os << 3.5 << ' ' << std::hex << 255 << ' ' << std::string("s");
+	CHECK(os.str() == "3.5 ff s");
+	std::istringstream is("12 3.25 word");
+	int i;
+	double d;
+	std::string w;
+	is >> i >> d >> w;
+	CHECK(i == 12 && d == 3.25 && w == "word");
+	std::println("println {}", 42);
+	std::cout << "done failed=" << failed << std::endl;
+	return failed;
+}
+EOF
+hosted_want="out_of_range println 42 done failed=0"
+for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
+	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
+	for speed in "" "--speed"; do
+		name="hosted c++ [${options} ${speed}]"
+		# shellcheck disable=SC2086
+		if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 "${work}/hosted.cc" -o "${work}/hosted.elf" 2> "${work}/err.txt"; then
+			fail "${name}: $(grep -m1 -E 'error|undefined' "${work}/err.txt")"
+			continue
+		fi
+		if [[ ${have_qemu} == y ]]; then
+			got=$(timeout 60 qemu-arm -cpu max "${work}/hosted.elf" 2>&1 | tr '\n' ' ' | sed 's/ $//')
+			check "${name}" "${hosted_want}" "${got}"
+		else
+			pass "${name} (linked)"
+		fi
+	done
+done
+
 # The library variants and the port choose the expected archives
 archive_check() { # archive_check <options> <expected archives>
 	printf '#include <stdio.h>\nint main(void) { printf("%%d\\n", 42); return 0; }\n' > "${work}/pf.c"
