@@ -350,12 +350,7 @@ for mode in "" "-fno-exceptions -funwind-tables"; do
 			name="stacktrace ${mode} [${options} ${speed}]"
 			# shellcheck disable=SC2086
 			if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 ${mode} "${work}/st.cc" -o "${work}/st.elf" -lstdc++exp 2> "${work}/err.txt"; then
-				# v6-m has no compare-and-swap: libbacktrace's __sync_bool_compare_and_swap needs the library's __sync_* libcalls
-				if [[ ${options} == *cortex-m0plus* ]] && grep -q "undefined reference to .__sync_" "${work}/err.txt"; then
-					echo "SKIP ${name}: needs the __sync_* libcalls (sgstreet/rtoskit-libc#119)"
-				else
-					fail "${name}: $(grep -m1 -E 'error|undefined' "${work}/err.txt")"
-				fi
+				fail "${name}: $(grep -m1 -E 'error|undefined' "${work}/err.txt")"
 				continue
 			fi
 			if [[ ${have_qemu} == y ]]; then
