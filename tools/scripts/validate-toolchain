@@ -263,6 +263,111 @@ for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=
 	done
 done
 
+# The same library without exceptions, without RTTI and without both (-fno-exceptions, -fno-rtti): containers,
+# strings, streams and a virtual call must build and run in each mode.
+cat > "${work}/noexc.cc" <<'EOF'
+#include <algorithm>
+#include <cstdio>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <numeric>
+#include <sstream>
+#include <string>
+#include <vector>
+struct Base { virtual ~Base() = default; virtual int f() const { return 1; } };
+struct Derived : Base { int f() const override { return 2; } };
+int main()
+{
+	std::vector<int> v(10);
+	std::iota(v.begin(), v.end(), 1);
+	std::sort(v.begin(), v.end(), std::greater<>());
+	std::map<std::string, int> m{{"a", 1}, {"b", 2}};
+	std::unique_ptr<Base> p = std::make_unique<Derived>();
+	std::ostringstream os;
+	os << v.front() << ' ' << m["b"] << ' ' << p->f();
+	std::cout << os.str() << std::endl;
+	std::string s = "abc";
+	s += std::to_string(v.back());
+	std::printf("%s\n", s.c_str());
+	return 0;
+}
+EOF
+noexc_want="10 2 2 abc1"
+for mode in "-fno-exceptions" "-fno-rtti" "-fno-exceptions -fno-rtti"; do
+	for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
+		"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
+		for speed in "" "--speed"; do
+			name="c++ ${mode} [${options} ${speed}]"
+			# shellcheck disable=SC2086
+			if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 ${mode} "${work}/noexc.cc" -o "${work}/noexc.elf" 2> "${work}/err.txt"; then
+				fail "${name}: $(grep -m1 -E 'error|undefined' "${work}/err.txt")"
+				continue
+			fi
+			if [[ ${have_qemu} == y ]]; then
+				got=$(timeout 60 qemu-arm -cpu max "${work}/noexc.elf" 2>&1 | tr '\n' ' ' | sed 's/ $//')
+				check "${name}" "${noexc_want}" "${got}"
+			else
+				pass "${name} (linked)"
+			fi
+		done
+	done
+done
+
+# std::stacktrace: libbacktrace is in libstdc++exp.a, so the program links -lstdc++exp. A trace needs unwind tables in
+# the program's own frames, which -fno-exceptions drops unless -funwind-tables puts them back. Capture reads no file
+# on the target; the entries are only symbolised when the executable can be opened (qemu-user can, a board cannot).
+# Four noinline frames below main must all be found, and to_string must produce text.
+cat > "${work}/st.cc" <<'EOF'
+#include <cstdio>
+#include <stacktrace>
+#include <string>
+static int depth;
+__attribute__((noinline)) static std::size_t leaf()
+{
+	auto t = std::stacktrace::current();
+	for (const auto &e : t)
+		if (!e) return 0;
+	depth = int(t.size());
+	return std::to_string(t).size();
+}
+__attribute__((noinline)) static std::size_t c() { std::size_t n = leaf(); asm volatile("" ::: "memory"); return n; }
+__attribute__((noinline)) static std::size_t b() { std::size_t n = c(); asm volatile("" ::: "memory"); return n; }
+__attribute__((noinline)) static std::size_t a() { std::size_t n = b(); asm volatile("" ::: "memory"); return n; }
+int main()
+{
+	std::size_t n = a();
+	std::printf("stacktrace depth>=4 %d to_string %s\n", depth >= 4, n != 0 ? "ok" : "empty");
+	return 0;
+}
+EOF
+st_want="stacktrace depth>=4 1 to_string ok"
+for mode in "" "-fno-exceptions -funwind-tables"; do
+	for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
+		"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
+		for speed in "" "--speed"; do
+			name="stacktrace ${mode} [${options} ${speed}]"
+			# shellcheck disable=SC2086
+			if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 ${mode} "${work}/st.cc" -o "${work}/st.elf" -lstdc++exp 2> "${work}/err.txt"; then
+				# v6-m has no compare-and-swap: libbacktrace's __sync_bool_compare_and_swap needs the library's __sync_* libcalls
+				if [[ ${options} == *cortex-m0plus* ]] && grep -q "undefined reference to .__sync_" "${work}/err.txt"; then
+					echo "SKIP ${name}: needs the __sync_* libcalls (sgstreet/rtoskit-libc#119)"
+				else
+					fail "${name}: $(grep -m1 -E 'error|undefined' "${work}/err.txt")"
+				fi
+				continue
+			fi
+			if [[ ${have_qemu} == y ]]; then
+				got=$(timeout 60 qemu-arm -cpu max "${work}/st.elf" 2>&1 | tr '\n' ' ' | sed 's/ $//')
+				check "${name}" "${st_want}" "${got}"
+			else
+				pass "${name} (linked)"
+			fi
+		done
+	done
+done
+
 # The library variants and the port choose the expected archives
 archive_check() { # archive_check <options> <expected archives>
 	printf '#include <stdio.h>\nint main(void) { printf("%%d\\n", 42); return 0; }\n' > "${work}/pf.c"

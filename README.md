@@ -15,7 +15,11 @@ Each toolchain has:
   `__cxa_thread_atexit`, with exceptions, RTTI, `thread_local` destructors and a hosted libstdc++ (`<string>`,
   `<vector>`, `<iostream>`, `<regex>`, `<ranges>`, `<chrono>`, `std::println`, ...), without wide characters.
   libstdc++ is configured by `compilers/arm-none-eabi/gcc-patches/0002-libstdcxx-add-rtoskit-libc-os-port.patch`
-  (`--with-rtoskit-libc`). Not there yet: `std::thread` and the other threading classes
+  (`--with-rtoskit-libc`). `-fno-exceptions` and `-fno-rtti` work. `std::stacktrace` needs `-lstdc++exp` (libbacktrace)
+  and, under `-fno-exceptions`, `-funwind-tables`; it captures frames on the target, but entries have no description
+  or file unless the executable can be opened (it cannot on a board; use `addr2line` on the ELF), and on v6-m it
+  waits for the library's `__sync_*` libcalls ([rtoskit-libc#119](https://github.com/sgstreet/rtoskit-libc/issues/119)).
+  Not there yet: `std::thread` and the other threading classes
   ([#2](https://github.com/sgstreet/rtoskit-gcc/issues/2)), and `std::filesystem` does nothing useful.
 
 ## Dependencies
