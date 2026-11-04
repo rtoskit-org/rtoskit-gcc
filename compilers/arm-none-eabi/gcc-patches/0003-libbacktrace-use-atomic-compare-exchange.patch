@@ -1,0 +1,104 @@
+libbacktrace: use the __atomic builtins, and compare and swap through them
+
+elf.c and dwarf.c publish lazily built tables with __sync_bool_compare_and_swap,
+even when the __atomic builtins are available. A target with no compare-and-swap
+instruction (Arm v6-M: Cortex-M0, M0+, M1) has a library call for the __atomic
+form (libatomic, or the C library's masking of interrupts) but none for the
+legacy __sync form, so libstdc++exp.a, and with it std::stacktrace, does not link.
+
+backtrace_atomic_cas is __atomic_compare_exchange_n when HAVE_ATOMIC_FUNCTIONS is
+defined, __sync_bool_compare_and_swap when only HAVE_SYNC_FUNCTIONS is, and
+aborts when neither is, like the other backtrace_atomic_* operations.
+
+Before GCC 16, libstdc++'s configure defines HAVE_ATOMIC_FUNCTIONS only when a
+link test of the __atomic builtins passes, which it does not on v6-m when the
+library that provides them is not built yet, so atomic.c and the other
+backtrace_atomic_* operations fell back on __sync too. internal.h now defines
+HAVE_ATOMIC_FUNCTIONS whenever the compiler defines __ATOMIC_ACQUIRE.
+
+diff -ruN a/libbacktrace/dwarf.c b/libbacktrace/dwarf.c
+--- a/libbacktrace/dwarf.c
++++ b/libbacktrace/dwarf.c
+@@ -4248,7 +4248,7 @@
+ 	      pp = &p->next;
+ 	    }
+ 
+-	  if (__sync_bool_compare_and_swap (pp, NULL, fdata))
++	  if (backtrace_atomic_cas (pp, NULL, fdata))
+ 	    break;
+ 	}
+     }
+diff -ruN a/libbacktrace/elf.c b/libbacktrace/elf.c
+--- a/libbacktrace/elf.c
++++ b/libbacktrace/elf.c
+@@ -751,7 +751,7 @@
+ 	      pp = &p->next;
+ 	    }
+ 
+-	  if (__sync_bool_compare_and_swap (pp, NULL, edata))
++	  if (backtrace_atomic_cas (pp, NULL, edata))
+ 	    break;
+ 	}
+     }
+@@ -7455,8 +7455,7 @@
+       if (found_sym)
+ 	backtrace_atomic_store_pointer (&state->syminfo_fn, elf_syminfo);
+       else
+-	(void) __sync_bool_compare_and_swap (&state->syminfo_fn, NULL,
+-					     elf_nosyms);
++	(void) backtrace_atomic_cas (&state->syminfo_fn, NULL, elf_nosyms);
+     }
+ 
+   if (!state->threaded)
+diff -ruN a/libbacktrace/internal.h b/libbacktrace/internal.h
+--- a/libbacktrace/internal.h
++++ b/libbacktrace/internal.h
+@@ -69,6 +69,14 @@
+ # endif
+ #endif
+ 
++/* Every compiler that defines __ATOMIC_ACQUIRE has the __atomic builtins.
++   libstdc++'s configure decides this with a link test before GCC 16, which
++   fails on a target whose atomics are library calls (Arm v6-M) when the
++   library that provides them is not yet built.  */
++#if !defined(HAVE_ATOMIC_FUNCTIONS) && defined(__ATOMIC_ACQUIRE)
++#define HAVE_ATOMIC_FUNCTIONS 1
++#endif
++
+ #ifndef HAVE_SYNC_FUNCTIONS
+ 
+ /* Define out the sync functions.  These should never be called if
+@@ -95,6 +103,15 @@
+ #define backtrace_atomic_store_int(p, v) \
+     __atomic_store_n ((p), (v), __ATOMIC_RELEASE)
+ 
++/* Store NEWV in *P and return nonzero if *P was OLDV.  Unlike
++   __sync_bool_compare_and_swap, the __atomic form is available as a
++   library call on targets with no compare-and-swap instruction
++   (Arm v6-M), where there is no __sync_bool_compare_and_swap_N.  */
++#define backtrace_atomic_cas(p, oldv, newv) \
++    ({ __typeof__ (*(p)) backtrace_cas_expected = (oldv); \
++       __atomic_compare_exchange_n ((p), &backtrace_cas_expected, (newv), 0, \
++				    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); })
++
+ #else /* !defined (HAVE_ATOMIC_FUNCTIONS) */
+ #ifdef HAVE_SYNC_FUNCTIONS
+ 
+@@ -107,6 +124,9 @@
+ extern void backtrace_atomic_store_size_t (size_t *, size_t);
+ extern void backtrace_atomic_store_int (int *, int);
+ 
++#define backtrace_atomic_cas(p, oldv, newv) \
++    __sync_bool_compare_and_swap ((p), (oldv), (newv))
++
+ #else /* !defined (HAVE_SYNC_FUNCTIONS) */
+ 
+ /* We have neither the sync nor the atomic functions.  These will
+@@ -117,6 +137,7 @@
+ #define backtrace_atomic_store_pointer(p, v) abort()
+ #define backtrace_atomic_store_size_t(p, v) abort()
+ #define backtrace_atomic_store_int(p, v) abort()
++#define backtrace_atomic_cas(p, oldv, newv) (abort(), 1)
+ 
+ #endif /* !defined (HAVE_SYNC_FUNCTIONS) */
+ #endif /* !defined (HAVE_ATOMIC_FUNCTIONS) */
