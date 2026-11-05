@@ -11,7 +11,10 @@
 # Smoke test of an installed toolchain: the multilibs, the core-to-multilib selection, the default TLS
 # model, gdb with Python, and that a threaded program using printf, sinf and thread_local links with every
 # multilib (release and speed builds) and runs under qemu-arm through the Linux test port, and a C++ program
-# (constructors, exceptions, RTTI, thread_local destructors) does the same.
+# (constructors, exceptions, RTTI, thread_local destructors) does the same; so do the hosted libstdc++, its
+# -fno-exceptions and -fno-rtti modes, std::stacktrace, the C++ threading classes (std::thread, std::mutex, ...) and the timing of sleep_for,
+# wait_for and try_lock_for on steady_clock and system_clock, and that everything the libstdc++ OS port claims
+# rtoskit-libc provides (0002 patch) is declared and linked.
 #
 # Usage: validate-toolchain <toolchain directory>      (the unpacked gcc-arm-none-eabi-<version>)
 #
@@ -361,6 +364,299 @@ for mode in "" "-fno-exceptions -funwind-tables"; do
 			fi
 		done
 	done
+done
+
+# The C++ threading classes, over the C11 thread model (--enable-threads=c11, gthr-c11.h) and rtoskit-libc's <threads.h>:
+# std::thread (join, detach, ids), the mutex classes (plain, recursive, timed, shared), condition variables (with a
+# timeout), std::call_once, function-local statics initialised by several threads at once, std::future, std::promise
+# and std::async (with an exception), thread_local objects with destructors, and std::atomic.
+cat > "${work}/thr.cc" <<'EOF'
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <future>
+#include <mutex>
+#include <shared_mutex>
+#include <stdexcept>
+#include <thread>
+#include <vector>
+using namespace std::chrono_literals;
+
+static std::atomic<int> tl_dtors{0};
+struct TL { int v = 0; ~TL() { ++tl_dtors; } };
+static thread_local TL tl;
+
+static std::atomic<int> inits{0};
+static int slow_init() { std::this_thread::sleep_for(5ms); return ++inits; }
+static int &local_static() { static int v = slow_init(); return v; }
+
+// Run fn in four threads at once and wait for them
+template <class F> static void in_threads(F fn)
+{
+	std::vector<std::thread> v;
+	for (int i = 0; i < 4; ++i) v.emplace_back(fn);
+	for (auto &t : v) t.join();
+}
+
+int main()
+{
+	// std::mutex, with enough contention that the lock has to block
+	std::mutex m;
+	int count = 0;
+	in_threads([&] { for (int i = 0; i < 1000; ++i) { std::lock_guard<std::mutex> l(m); ++count; } });
+	std::printf("mutex=%d", count);
+
+	// std::recursive_mutex: the same thread locks it twice
+	std::recursive_mutex rm;
+	bool rec = false;
+	std::thread([&] { std::lock_guard<std::recursive_mutex> a(rm); std::lock_guard<std::recursive_mutex> b(rm); rec = true; }).join();
+	std::printf(" rec=%d", rec);
+
+	// std::timed_mutex: it times out while another thread holds it, then it is acquired
+	std::timed_mutex tm;
+	tm.lock();
+	bool early = true, late = false;
+	std::thread([&] { early = tm.try_lock_for(20ms); }).join();
+	tm.unlock();
+	std::thread([&] { late = tm.try_lock_for(1s); if (late) tm.unlock(); }).join();
+	std::printf(" timed=%d,%d", early, late);
+
+	// std::condition_variable: a hand-off, and a wait_for that times out
+	std::mutex cm;
+	std::condition_variable cv;
+	bool ready = false;
+	int got = 0;
+	std::thread consumer([&] { std::unique_lock<std::mutex> l(cm); cv.wait(l, [&] { return ready; }); got = 1; });
+	std::this_thread::sleep_for(10ms);
+	{ std::lock_guard<std::mutex> l(cm); ready = true; }
+	cv.notify_all();
+	consumer.join();
+	std::unique_lock<std::mutex> l(cm);
+	bool timed_out = cv.wait_for(l, 20ms) == std::cv_status::timeout;
+	l.unlock();
+	std::printf(" cv=%d,%d", got, timed_out);
+
+	// std::call_once from four threads, and a function-local static initialised by four at once
+	std::once_flag once;
+	std::atomic<int> ran{0};
+	in_threads([&] { std::call_once(once, [&] { std::this_thread::sleep_for(5ms); ++ran; }); });
+	std::printf(" once=%d", ran.load());
+	in_threads([&] { local_static(); });
+	std::printf(" static=%d,%d", inits.load(), local_static());
+
+	// std::future, std::promise and std::async, and an exception that travels through the future
+	std::promise<int> p;
+	std::future<int> pf = p.get_future();
+	std::thread([&] { p.set_value(7); }).detach();
+	int async_value = std::async(std::launch::async, [] { return 42; }).get();
+	std::printf(" future=%d,%d", async_value, pf.get());
+	bool caught = false;
+	try { std::async(std::launch::async, [] () -> int { throw std::runtime_error("x"); }).get(); }
+	catch (const std::runtime_error &) { caught = true; }
+	std::printf(" exc=%d", caught);
+
+	// A thread_local object is destroyed when its thread ends
+	std::thread([] { tl.v = 1; }).join();
+	std::printf(" tldtor=%d", tl_dtors.load());
+
+	// A detached thread runs on its own
+	std::atomic<int> detached{0};
+	std::thread([&] { detached = 1; }).detach();
+	for (int i = 0; i < 100 && !detached; ++i) std::this_thread::sleep_for(10ms);
+	std::printf(" detach=%d", detached.load());
+
+	// Thread ids: the main thread is not "no thread", a thread's id is the one its handle reports
+	std::thread::id inner;
+	std::thread t([&] { inner = std::this_thread::get_id(); });
+	std::thread::id outer = t.get_id();
+	t.join();
+	std::printf(" id=%d", std::this_thread::get_id() != std::thread::id() && inner == outer && !t.joinable());
+
+	// std::shared_mutex: another thread can share a shared lock but not take it exclusively
+	std::shared_mutex sm;
+	sm.lock_shared();
+	bool shared = false, exclusive = true;
+	std::thread([&] { shared = sm.try_lock_shared(); if (shared) sm.unlock_shared(); exclusive = sm.try_lock(); }).join();
+	sm.unlock_shared();
+	std::printf(" shared=%d,%d\n", shared, exclusive);
+	return 0;
+}
+EOF
+thr_want="mutex=4000 rec=1 timed=0,1 cv=1,1 once=1 static=1,1 future=42,7 exc=1 tldtor=1 detach=1 id=1 shared=1,0"
+for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
+	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
+	for speed in "" "--speed"; do
+		name="threads [${options} ${speed}]"
+		# shellcheck disable=SC2086
+		if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 "${work}/thr.cc" -o "${work}/thr.elf" 2> "${work}/err.txt"; then
+			fail "${name}: $(grep -m1 -E 'error|undefined' "${work}/err.txt")"
+			continue
+		fi
+		if [[ ${have_qemu} == y ]]; then
+			got=$(timeout 120 qemu-arm -cpu max "${work}/thr.elf" 2>&1 | tr '\n' ' ' | sed 's/ $//')
+			check "${name}" "${thr_want}" "${got}"
+		else
+			pass "${name} (linked)"
+		fi
+	done
+done
+
+# The clocks and the sleeps under <chrono> and <thread>: libstdc++ reads CLOCK_REALTIME and CLOCK_MONOTONIC through
+# clock_gettime, sleeps in nanosleep and yields through thrd_yield (0002-libstdcxx-add-rtoskit-libc-os-port.patch).
+# A fallback on time() would pass the threads test above, but its one-second steps show here: a 50 ms sleep would
+# measure 0 or 1000 ms. The upper bounds are ten times the request so that a loaded machine does not fail them.
+cat > "${work}/clk.cc" <<'EOF'
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <mutex>
+#include <thread>
+using namespace std::chrono;
+using namespace std::chrono_literals;
+
+// Whether a measured time is at least the request and well short of a second
+static bool within(nanoseconds elapsed, nanoseconds request, nanoseconds limit)
+{
+	return elapsed >= request && elapsed < limit;
+}
+
+int main()
+{
+	// steady_clock never goes backwards
+	bool mono = true;
+	auto last = steady_clock::now();
+	for (int i = 0; i < 1000; ++i) {
+		auto now = steady_clock::now();
+		if (now < last) mono = false;
+		last = now;
+	}
+	std::printf("mono=%d", mono);
+
+	// sleep_for sleeps at least as long as asked, on both clocks, with sub-second resolution
+	auto s0 = steady_clock::now();
+	auto w0 = system_clock::now();
+	std::this_thread::sleep_for(50ms);
+	auto s1 = steady_clock::now();
+	auto w1 = system_clock::now();
+	std::printf(" sleep=%d,%d", within(s1 - s0, 50ms, 500ms), within(w1 - w0, 50ms, 500ms));
+
+	// condition_variable::wait_for times out after the time asked, not early and not a second late
+	std::mutex m;
+	std::condition_variable cv;
+	std::unique_lock<std::mutex> l(m);
+	auto c0 = steady_clock::now();
+	bool timed_out = cv.wait_for(l, 100ms) == std::cv_status::timeout;
+	auto c1 = steady_clock::now();
+	std::printf(" wait=%d", timed_out && within(c1 - c0, 100ms, 1s));
+	l.unlock();
+
+	// timed_mutex::try_lock_for gives up after the time asked
+	std::timed_mutex tm;
+	tm.lock();
+	bool locked = true;
+	nanoseconds waited{};
+	std::thread([&] {
+		auto t0 = steady_clock::now();
+		locked = tm.try_lock_for(100ms);
+		waited = steady_clock::now() - t0;
+	}).join();
+	std::printf(" lock=%d", !locked && within(waited, 100ms, 1s));
+
+	// yield returns, and the clock still moves forward afterwards
+	for (int i = 0; i < 100; ++i) std::this_thread::yield();
+	std::printf(" yield=%d\n", steady_clock::now() >= last);
+	return 0;
+}
+EOF
+clk_want="mono=1 sleep=1,1 wait=1 lock=1 yield=1"
+for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
+	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
+	for speed in "" "--speed"; do
+		name="clocks [${options} ${speed}]"
+		# shellcheck disable=SC2086
+		if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 "${work}/clk.cc" -o "${work}/clk.elf" 2> "${work}/err.txt"; then
+			fail "${name}: $(grep -m1 -E 'error|undefined' "${work}/err.txt")"
+			continue
+		fi
+		if [[ ${have_qemu} == y ]]; then
+			got=$(timeout 60 qemu-arm -cpu max "${work}/clk.elf" 2>&1 | tr '\n' ' ' | sed 's/ $//')
+			check "${name}" "${clk_want}" "${got}"
+		else
+			pass "${name} (linked)"
+		fi
+	done
+done
+
+# What the libstdc++ OS port claims rtoskit-libc provides (0002-libstdcxx-add-rtoskit-libc-os-port.patch hard-codes
+# it, because configure runs no link tests on a cross target) must be there: each HAVE_ and _GLIBCXX_USE_ name in the
+# patch maps to a header, a macro or a function, and a program that refers to all of them must compile and link.
+# The list is read from the patch, so it cannot drift from what the check covers.
+port_patch=$(ls "${PROJECT_ROOT}"/compilers/arm-none-eabi/gcc-patches/0002-*.patch 2> /dev/null | head -1)
+port_funcs="" port_headers="" port_macros=""
+if [[ -n ${port_patch} ]]; then
+	while read -r n; do
+		case ${n} in
+		HAVE_TLS) ;;
+		HAVE_S_ISREG) port_macros+=" S_ISREG" ;;
+		HAVE_*_H) h=$(echo "${n#HAVE_}" | tr 'A-Z' 'a-z'); port_headers+=" $(echo "${h%_h}" | sed 's,^sys_,sys/,').h" ;;
+		_GLIBCXX_USE_CLOCK_*) port_macros+=" ${n#_GLIBCXX_USE_}"; port_funcs+=" clock_gettime" ;;
+		_GLIBCXX_USE_NANOSLEEP) port_funcs+=" nanosleep" ;;
+		_GLIBCXX_USE_SCHED_YIELD) port_funcs+=" sched_yield thrd_yield" ;;
+		HAVE_*) port_funcs+=" $(echo "${n#HAVE_}" | tr 'A-Z' 'a-z')" ;;
+		esac
+	done < <(sed -n '/^+++ b\/libstdc++-v3\/configure.ac/,$p' "${port_patch}" | sed -n 's/^+ *AC_DEFINE(\([A-Za-z0-9_]*\)).*/\1/p')
+fi
+port_funcs=$(echo "${port_funcs}" | tr ' ' '\n' | sort -u | grep . | tr '\n' ' ')
+if [[ -z ${port_funcs} ]]; then
+	fail "libstdc++ port: no names found in ${port_patch:-the 0002 patch}"
+else
+	{
+		for h in math.h stdlib.h time.h threads.h sched.h sys/stat.h ${port_headers}; do
+			echo "#if __has_include(<${h}>)"; echo "#include <${h}>"; echo "#endif"
+		done
+		for h in ${port_headers}; do
+			echo "#if !__has_include(<${h}>)"; echo "#error missing header ${h}"; echo "#endif"
+		done
+		for m in ${port_macros}; do
+			echo "#ifndef ${m}"; echo "#error missing macro ${m}"; echo "#endif"
+		done
+		echo "static const void *const refs[] = {"
+		for f in ${port_funcs}; do echo "	(const void *) ${f},"; done
+		echo "};"
+		echo "int main(int argc, char **argv) { (void) argv; return refs[argc] != 0; }"
+	} > "${work}/port.c"
+	for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m4 -mfloat-abi=hard" "-mcpu=cortex-m33"; do
+		name="libstdc++ port names [${options}]"
+		# shellcheck disable=SC2086
+		if ! LC_ALL=C "${GCC}" ${options} --specs=rtoskit-linux.specs -Os "${work}/port.c" -o "${work}/port.elf" 2> "${work}/err.txt"; then
+			missing=$(sed -n -e "s/.*: error: missing \(header\|macro\) \(.*\)/\2/p" \
+				-e "s/.*error: '\([A-Za-z0-9_]*\)' undeclared.*/\1/p" \
+				-e "s/.*undefined reference to \`\([A-Za-z0-9_]*\)'.*/\1/p" "${work}/err.txt" | sort -u | tr '\n' ' ' | sed 's/ $//')
+			fail "${name}: missing ${missing:-$(head -1 "${work}/err.txt")}"
+			continue
+		fi
+		pass "${name}"
+	done
+fi
+
+# The C11 thread model must not reach C: a C program (no threads of its own) links none of the library's mutex,
+# condition variable, thread, key or call_once functions.
+cat > "${work}/plain.c" <<'EOF'
+#include <stdio.h>
+#include <math.h>
+int main(int argc, char **argv) { (void) argv; printf("%f\n", sinf((float) argc)); return 0; }
+EOF
+NM=${GCC%gcc}nm
+for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m4 -mfloat-abi=hard" "-mcpu=cortex-m33"; do
+	name="c without threads [${options}]"
+	# shellcheck disable=SC2086
+	if ! "${GCC}" ${options} --specs=rtoskit-linux.specs -Os "${work}/plain.c" -o "${work}/plain.elf" 2> "${work}/err.txt"; then
+		fail "${name}: $(head -1 "${work}/err.txt")"
+		continue
+	fi
+	used=$("${NM}" "${work}/plain.elf" | grep -E ' [TtWw] (mtx_|cnd_|thrd_|tss_|call_once)' | awk '{print $3}' | tr '\n' ' ' | sed 's/ $//')
+	check "${name}" "" "${used}"
 done
 
 # The library variants and the port choose the expected archives

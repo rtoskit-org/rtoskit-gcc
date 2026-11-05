@@ -7,7 +7,9 @@ tables; with neither, the generic cross configuration needs a linkable target.
 --with-rtoskit-libc selects config/os/generic, which needs only the ISO
 <ctype.h> functions, and defines what rtoskit-libc provides: the float math
 functions and their long double forms, strtof, aligned_alloc, quick_exit and
-at_quick_exit, thread-local storage, S_ISREG, <sys/types.h>, <inttypes.h>, <fcntl.h> and <unistd.h>.
+at_quick_exit, thread-local storage, S_ISREG, <sys/types.h>, <inttypes.h>, <fcntl.h> and <unistd.h>,
+and the POSIX clocks (CLOCK_REALTIME, CLOCK_MONOTONIC), nanosleep and sched_yield, which std::chrono's clocks,
+std::this_thread::sleep_for and std::this_thread::yield use.
 The header probes compile as C in the compiler's default dialect, which before GCC 15 cannot
 parse the C23-only <inttypes.h> or <fcntl.h>.
 Names it lacks (memalign, link, setenv, sleep, ...) stay undefined.
@@ -18,7 +20,7 @@ autoconf run is needed. It applies to GCC 14, 15 and 16.
 diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
 --- a/libstdc++-v3/configure
 +++ b/libstdc++-v3/configure
-@@ -27525,7 +27525,125 @@
+@@ -27525,7 +27525,133 @@
  
    # First, test for "known" system libraries.  We may be using newlib even
    # on a hosted environment.
@@ -95,6 +97,14 @@ diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
 +
 +    $as_echo "#define HAVE_S_ISREG 1" >>confdefs.h
 +
++    $as_echo "#define _GLIBCXX_USE_CLOCK_REALTIME 1" >>confdefs.h
++
++    $as_echo "#define _GLIBCXX_USE_CLOCK_MONOTONIC 1" >>confdefs.h
++
++    $as_echo "#define _GLIBCXX_USE_NANOSLEEP 1" >>confdefs.h
++
++    $as_echo "#define _GLIBCXX_USE_SCHED_YIELD 1" >>confdefs.h
++
 +    $as_echo "#define HAVE_ACOSL 1" >>confdefs.h
 +
 +    $as_echo "#define HAVE_ASINL 1" >>confdefs.h
@@ -148,7 +158,7 @@ diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
 diff -ruN a/libstdc++-v3/configure.ac b/libstdc++-v3/configure.ac
 --- a/libstdc++-v3/configure.ac
 +++ b/libstdc++-v3/configure.ac
-@@ -338,7 +338,68 @@
+@@ -338,7 +338,72 @@
  
    # First, test for "known" system libraries.  We may be using newlib even
    # on a hosted environment.
@@ -191,6 +201,10 @@ diff -ruN a/libstdc++-v3/configure.ac b/libstdc++-v3/configure.ac
 +    AC_DEFINE(HAVE_FCNTL_H)
 +    AC_DEFINE(HAVE_UNISTD_H)
 +    AC_DEFINE(HAVE_S_ISREG)
++    AC_DEFINE(_GLIBCXX_USE_CLOCK_REALTIME)
++    AC_DEFINE(_GLIBCXX_USE_CLOCK_MONOTONIC)
++    AC_DEFINE(_GLIBCXX_USE_NANOSLEEP)
++    AC_DEFINE(_GLIBCXX_USE_SCHED_YIELD)
 +    AC_DEFINE(HAVE_ACOSL)
 +    AC_DEFINE(HAVE_ASINL)
 +    AC_DEFINE(HAVE_ATAN2L)

@@ -1,0 +1,415 @@
+gthr: add a thread model over ISO C11 <threads.h>, --enable-threads=c11
+
+libgcc and libstdc++ reach threads only through gthr.h, which includes the
+header of the target's thread model. GCC has none over the C11 thread functions
+(thrd_create, mtx_lock, cnd_wait, tss_create, call_once), so a bare-metal target
+with a C library that has them can only configure --enable-threads=no, which makes
+every mutex a no-op and leaves libstdc++ without std::thread, std::mutex,
+std::condition_variable, std::future and the rest of <thread> and <mutex>.
+
+libgcc/gthr-c11.h is the thread model. C11 has no static initializers for
+mutexes and condition variables, so it defines __GTHREAD_MUTEX_INIT_FUNCTION,
+__GTHREAD_RECURSIVE_MUTEX_INIT_FUNCTION and __GTHREAD_COND_INIT_FUNCTION and not
+__GTHREAD_MUTEX_INIT and friends; a thread's start routine returns an int, so
+__gthread_create starts the thread through a small heap record that holds the
+void * routine and its argument; every mutex is initialized as mtx_timed so it
+can be locked with a timeout; and the results are the errno values the POSIX
+functions return. There is no read-write lock, so libstdc++ uses its own.
+
+The model is named in gcc/configure.ac (the list of valid --enable-threads
+values) and in GCC_AC_THREAD_HEADER (config/gthr.m4), which libgcc and
+libstdc++ use to find the header. The generated configure scripts of gcc, libgcc
+and libstdc++-v3 are edited the same way, so no autoconf run is needed.
+
+diff -ruN a/config/gthr.m4 b/config/gthr.m4
+--- a/config/gthr.m4
++++ b/config/gthr.m4
+@@ -32,6 +32,7 @@
+ [
+ case $1 in
+     aix)	thread_header=config/rs6000/gthr-aix.h ;;
++    c11)	thread_header=gthr-c11.h ;;
+     dce)	thread_header=config/pa/gthr-dce.h ;;
+     gcn)	thread_header=config/gcn/gthr-gcn.h ;;
+     lynx)	thread_header=config/gthr-lynx.h ;;
+diff -ruN a/gcc/configure b/gcc/configure
+--- a/gcc/configure
++++ b/gcc/configure
+@@ -13220,7 +13220,7 @@
+     target_thread_file='single'
+     ;;
+   aix | dce | lynx | mipssde | posix | rtems | \
+-  single | tpf | vxworks | win32 | mcf)
++  single | tpf | vxworks | win32 | mcf | c11)
+     target_thread_file=${enable_threads}
+     ;;
+   *)
+diff -ruN a/gcc/configure.ac b/gcc/configure.ac
+--- a/gcc/configure.ac
++++ b/gcc/configure.ac
+@@ -2110,7 +2110,7 @@
+     target_thread_file='single'
+     ;;
+   aix | dce | lynx | mipssde | posix | rtems | \
+-  single | tpf | vxworks | win32 | mcf)
++  single | tpf | vxworks | win32 | mcf | c11)
+     target_thread_file=${enable_threads}
+     ;;
+   *)
+diff -ruN a/libgcc/configure b/libgcc/configure
+--- a/libgcc/configure
++++ b/libgcc/configure
+@@ -5816,6 +5816,7 @@
+ 
+ case $target_thread_file in
+     aix)	thread_header=config/rs6000/gthr-aix.h ;;
++    c11)	thread_header=gthr-c11.h ;;
+     dce)	thread_header=config/pa/gthr-dce.h ;;
+     gcn)	thread_header=config/gcn/gthr-gcn.h ;;
+     lynx)	thread_header=config/gthr-lynx.h ;;
+diff -ruN a/libgcc/gthr-c11.h b/libgcc/gthr-c11.h
+--- a/libgcc/gthr-c11.h
++++ b/libgcc/gthr-c11.h
+@@ -0,0 +1,331 @@
++/* Threads implementation over ISO C11 <threads.h>.
++   Copyright (C) 2026 Free Software Foundation, Inc.
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify it under
++the terms of the GNU General Public License as published by the Free
++Software Foundation; either version 3, or (at your option) any later
++version.
++
++GCC is distributed in the hope that it will be useful, but WITHOUT ANY
++WARRANTY; without even the implied warranty of MERCHANTABILITY or
++FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++for more details.
++
++Under Section 7 of GPL version 3, you are granted additional
++permissions described in the GCC Runtime Library Exception, version
++3.1, as published by the Free Software Foundation.
++
++You should have received a copy of the GNU General Public License and
++a copy of the GCC Runtime Library Exception along with this program;
++see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
++<http://www.gnu.org/licenses/>.  */
++
++#ifndef GCC_GTHR_C11_H
++#define GCC_GTHR_C11_H
++
++/* C11 threads (the thrd_, mtx_, cnd_, tss_ functions and call_once) specific
++   definitions, selected with --enable-threads=c11.  The C library provides
++   the threads, so every function is always there and the model is always
++   active.
++
++   What C11 leaves out:
++
++   - There are no static initializers for mutexes and condition variables,
++     only mtx_init and cnd_init, so the function-style initializers are
++     defined instead of __GTHREAD_MUTEX_INIT and friends.
++   - A thread's start routine returns an int, not a void *.  __gthread_create
++     starts the thread through a small heap record holding the routine and
++     its argument, and the result of the routine is cut to an int.
++   - A thread has no attributes: its stack and priority are whatever the C
++     library gives a new thread.
++   - Every mutex is initialized as mtx_timed so that it can be locked with a
++     timeout; that costs nothing the plain mutex does not already have.
++   - Deadlines are TIME_UTC (CLOCK_REALTIME) times.  libstdc++ passes those
++     for every clock when it does not have the POSIX clock-wait functions.
++   - There is no read-write lock; libstdc++ builds its shared mutex from a
++     mutex and a condition variable.
++
++   The functions return 0 or an errno value, as the POSIX ones do, so that
++   the callers see the same values whichever model is in use.  */
++
++#define __GTHREADS 1
++#define __GTHREADS_CXX0X 1
++
++#include <errno.h>
++#include <stdint.h>
++#include <threads.h>
++#include <time.h>
++
++typedef thrd_t __gthread_t;
++typedef tss_t __gthread_key_t;
++typedef once_flag __gthread_once_t;
++typedef mtx_t __gthread_mutex_t;
++typedef mtx_t __gthread_recursive_mutex_t;
++typedef cnd_t __gthread_cond_t;
++typedef struct timespec __gthread_time_t;
++
++/* Condition variables are supported.  Please look at comments in gthr.h
++   for details. */
++#define __GTHREAD_HAS_COND	1
++
++#define __GTHREAD_ONCE_INIT ONCE_FLAG_INIT
++#define __GTHREAD_MUTEX_INIT_FUNCTION __gthread_mutex_init_function
++#define __GTHREAD_RECURSIVE_MUTEX_INIT_FUNCTION __gthread_recursive_mutex_init_function
++#define __GTHREAD_COND_INIT_FUNCTION __gthread_cond_init_function
++#define __GTHREAD_TIME_INIT {0,0}
++
++/* The C library always has the threads.  */
++static inline int
++__gthread_active_p (void)
++{
++  return 1;
++}
++
++/* The errno value for a C11 result.  */
++static inline int
++__gthread_c11_errno (int __result)
++{
++  switch (__result)
++    {
++    case thrd_success:
++      return 0;
++    case thrd_busy:
++      return EBUSY;
++    case thrd_timedout:
++      return ETIMEDOUT;
++    case thrd_nomem:
++      return ENOMEM;
++    default:
++      return EINVAL;
++    }
++}
++
++/* A thread's routine and argument, which the new thread takes out of the
++   record before it calls the routine.  */
++struct __gthread_c11_start
++{
++  void *(*__func) (void *);
++  void *__args;
++};
++
++static inline int
++__gthread_c11_run (void *__start)
++{
++  struct __gthread_c11_start __s = *(struct __gthread_c11_start *) __start;
++
++  __builtin_free (__start);
++  return (int) (intptr_t) __s.__func (__s.__args);
++}
++
++static inline int
++__gthread_create (__gthread_t *__threadid, void *(*__func) (void *),
++		  void *__args)
++{
++  struct __gthread_c11_start *__start
++    = (struct __gthread_c11_start *) __builtin_malloc (sizeof *__start);
++  int __r;
++
++  if (!__start)
++    return ENOMEM;
++  __start->__func = __func;
++  __start->__args = __args;
++  __r = thrd_create (__threadid, __gthread_c11_run, __start);
++  if (__r != thrd_success)
++    {
++      __builtin_free (__start);
++      return __r == thrd_nomem ? ENOMEM : EAGAIN;
++    }
++  return 0;
++}
++
++static inline int
++__gthread_join (__gthread_t __threadid, void **__value_ptr)
++{
++  int __value;
++  int __r = thrd_join (__threadid, &__value);
++
++  if (__r == thrd_success && __value_ptr)
++    *__value_ptr = (void *) (intptr_t) __value;
++  return __gthread_c11_errno (__r);
++}
++
++static inline int
++__gthread_detach (__gthread_t __threadid)
++{
++  return __gthread_c11_errno (thrd_detach (__threadid));
++}
++
++static inline int
++__gthread_equal (__gthread_t __t1, __gthread_t __t2)
++{
++  return thrd_equal (__t1, __t2);
++}
++
++static inline __gthread_t
++__gthread_self (void)
++{
++  return thrd_current ();
++}
++
++static inline int
++__gthread_yield (void)
++{
++  thrd_yield ();
++  return 0;
++}
++
++static inline int
++__gthread_once (__gthread_once_t *__once, void (*__func) (void))
++{
++  call_once (__once, __func);
++  return 0;
++}
++
++static inline int
++__gthread_key_create (__gthread_key_t *__key, void (*__dtor) (void *))
++{
++  return __gthread_c11_errno (tss_create (__key, __dtor));
++}
++
++static inline int
++__gthread_key_delete (__gthread_key_t __key)
++{
++  tss_delete (__key);
++  return 0;
++}
++
++static inline void *
++__gthread_getspecific (__gthread_key_t __key)
++{
++  return tss_get (__key);
++}
++
++static inline int
++__gthread_setspecific (__gthread_key_t __key, const void *__ptr)
++{
++  return __gthread_c11_errno (tss_set (__key, (void *) (uintptr_t) __ptr));
++}
++
++static inline void
++__gthread_mutex_init_function (__gthread_mutex_t *__mutex)
++{
++  mtx_init (__mutex, mtx_timed);
++}
++
++static inline int
++__gthread_mutex_destroy (__gthread_mutex_t *__mutex)
++{
++  mtx_destroy (__mutex);
++  return 0;
++}
++
++static inline int
++__gthread_mutex_lock (__gthread_mutex_t *__mutex)
++{
++  return __gthread_c11_errno (mtx_lock (__mutex));
++}
++
++static inline int
++__gthread_mutex_trylock (__gthread_mutex_t *__mutex)
++{
++  return __gthread_c11_errno (mtx_trylock (__mutex));
++}
++
++static inline int
++__gthread_mutex_timedlock (__gthread_mutex_t *__mutex,
++			   const __gthread_time_t *__abs_timeout)
++{
++  return __gthread_c11_errno (mtx_timedlock (__mutex, __abs_timeout));
++}
++
++static inline int
++__gthread_mutex_unlock (__gthread_mutex_t *__mutex)
++{
++  return __gthread_c11_errno (mtx_unlock (__mutex));
++}
++
++static inline int
++__gthread_recursive_mutex_init_function (__gthread_recursive_mutex_t *__mutex)
++{
++  return __gthread_c11_errno (mtx_init (__mutex, mtx_timed | mtx_recursive));
++}
++
++static inline int
++__gthread_recursive_mutex_lock (__gthread_recursive_mutex_t *__mutex)
++{
++  return __gthread_mutex_lock (__mutex);
++}
++
++static inline int
++__gthread_recursive_mutex_trylock (__gthread_recursive_mutex_t *__mutex)
++{
++  return __gthread_mutex_trylock (__mutex);
++}
++
++static inline int
++__gthread_recursive_mutex_timedlock (__gthread_recursive_mutex_t *__mutex,
++				     const __gthread_time_t *__abs_timeout)
++{
++  return __gthread_mutex_timedlock (__mutex, __abs_timeout);
++}
++
++static inline int
++__gthread_recursive_mutex_unlock (__gthread_recursive_mutex_t *__mutex)
++{
++  return __gthread_mutex_unlock (__mutex);
++}
++
++static inline int
++__gthread_recursive_mutex_destroy (__gthread_recursive_mutex_t *__mutex)
++{
++  return __gthread_mutex_destroy (__mutex);
++}
++
++static inline void
++__gthread_cond_init_function (__gthread_cond_t *__cond)
++{
++  cnd_init (__cond);
++}
++
++static inline int
++__gthread_cond_broadcast (__gthread_cond_t *__cond)
++{
++  return __gthread_c11_errno (cnd_broadcast (__cond));
++}
++
++static inline int
++__gthread_cond_signal (__gthread_cond_t *__cond)
++{
++  return __gthread_c11_errno (cnd_signal (__cond));
++}
++
++static inline int
++__gthread_cond_wait (__gthread_cond_t *__cond, __gthread_mutex_t *__mutex)
++{
++  return __gthread_c11_errno (cnd_wait (__cond, __mutex));
++}
++
++static inline int
++__gthread_cond_timedwait (__gthread_cond_t *__cond, __gthread_mutex_t *__mutex,
++			  const __gthread_time_t *__abs_timeout)
++{
++  return __gthread_c11_errno (cnd_timedwait (__cond, __mutex, __abs_timeout));
++}
++
++static inline int
++__gthread_cond_wait_recursive (__gthread_cond_t *__cond,
++			       __gthread_recursive_mutex_t *__mutex)
++{
++  return __gthread_cond_wait (__cond, __mutex);
++}
++
++static inline int
++__gthread_cond_destroy (__gthread_cond_t *__cond)
++{
++  cnd_destroy (__cond);
++  return 0;
++}
++
++#endif /* ! GCC_GTHR_C11_H */
+diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
+--- a/libstdc++-v3/configure
++++ b/libstdc++-v3/configure
+@@ -16381,6 +16381,7 @@
+ 
+ case $target_thread_file in
+     aix)	thread_header=config/rs6000/gthr-aix.h ;;
++    c11)	thread_header=gthr-c11.h ;;
+     dce)	thread_header=config/pa/gthr-dce.h ;;
+     gcn)	thread_header=config/gcn/gthr-gcn.h ;;
+     lynx)	thread_header=config/gthr-lynx.h ;;
