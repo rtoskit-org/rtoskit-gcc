@@ -16,6 +16,13 @@ void * routine and its argument; every mutex is initialized as mtx_timed so it
 can be locked with a timeout; and the results are the errno values the POSIX
 functions return. There is no read-write lock, so libstdc++ uses its own.
 
+__gthread_once calls call_once, which has no unwind tables: an exception from the
+function of a std::call_once would terminate the program and leave the flag set.
+When the C library installs <rtoskit-libc.h> (__RTOSKIT_LIBC__), it calls that
+library's __libc_call_once_eh instead, which is built with exception tables, runs
+the function under a cleanup that resets the flag, and so lets the exception
+travel and the next std::call_once run the function again.
+
 The model is named in gcc/configure.ac (the list of valid --enable-threads
 values) and in GCC_AC_THREAD_HEADER (config/gthr.m4), which libgcc and
 libstdc++ use to find the header. The generated configure scripts of gcc, libgcc
@@ -70,7 +77,7 @@ diff -ruN a/libgcc/configure b/libgcc/configure
 diff -ruN a/libgcc/gthr-c11.h b/libgcc/gthr-c11.h
 --- a/libgcc/gthr-c11.h
 +++ b/libgcc/gthr-c11.h
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,346 @@
 +/* Threads implementation over ISO C11 <threads.h>.
 +   Copyright (C) 2026 Free Software Foundation, Inc.
 +
@@ -130,6 +137,17 @@ diff -ruN a/libgcc/gthr-c11.h b/libgcc/gthr-c11.h
 +#include <stdint.h>
 +#include <threads.h>
 +#include <time.h>
++
++/* A C library that can unwind through its call_once says so with a function of
++   its own: call_once is a C function with no unwind tables, so an exception
++   that leaves the function of a std::call_once would terminate the program and
++   leave the flag set.  rtoskit-libc installs <rtoskit-libc.h> and provides
++   __libc_call_once_eh for that.  */
++#if defined __has_include
++# if __has_include(<rtoskit-libc.h>)
++#  include <rtoskit-libc.h>
++# endif
++#endif
 +
 +typedef thrd_t __gthread_t;
 +typedef tss_t __gthread_key_t;
@@ -252,7 +270,11 @@ diff -ruN a/libgcc/gthr-c11.h b/libgcc/gthr-c11.h
 +static inline int
 +__gthread_once (__gthread_once_t *__once, void (*__func) (void))
 +{
++#ifdef __RTOSKIT_LIBC__
++  __libc_call_once_eh (__once, __func);
++#else
 +  call_once (__once, __func);
++#endif
 +  return 0;
 +}
 +

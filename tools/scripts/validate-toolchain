@@ -13,8 +13,8 @@
 # multilib (release and speed builds) and runs under qemu-arm through the Linux test port, and a C++ program
 # (constructors, exceptions, RTTI, thread_local destructors) does the same; so do the hosted libstdc++, its
 # -fno-exceptions and -fno-rtti modes, std::stacktrace, the C++ threading classes (std::thread, std::mutex, ...) and the timing of sleep_for,
-# wait_for and try_lock_for on steady_clock and system_clock, and that everything the libstdc++ OS port claims
-# rtoskit-libc provides (0002 patch) is declared and linked.
+# wait_for and try_lock_for on steady_clock and system_clock, and that libstdc++ was configured with every feature
+# <rtoskit-libc.h> names.
 #
 # Usage: validate-toolchain <toolchain directory>      (the unpacked gcc-arm-none-eabi-<version>)
 #
@@ -377,6 +377,7 @@ cat > "${work}/thr.cc" <<'EOF'
 #include <cstdio>
 #include <future>
 #include <mutex>
+#include <random>
 #include <shared_mutex>
 #include <stdexcept>
 #include <thread>
@@ -442,6 +443,21 @@ int main()
 	std::atomic<int> ran{0};
 	in_threads([&] { std::call_once(once, [&] { std::this_thread::sleep_for(5ms); ++ran; }); });
 	std::printf(" once=%d", ran.load());
+	// An exception from the function of a std::call_once leaves the flag unset, so the next call runs it again
+	std::once_flag eflag;
+	int attempts = 0;
+	bool threw = false;
+	try { std::call_once(eflag, [&] { ++attempts; throw std::runtime_error("x"); }); }
+	catch (const std::runtime_error &) { threw = true; }
+	std::call_once(eflag, [&] { ++attempts; });
+	std::call_once(eflag, [&] { ++attempts; });
+	std::printf(" onceexc=%d,%d", threw, attempts);
+	// std::random_device reads getentropy
+	std::random_device rd;
+	unsigned first = rd();
+	bool varies = false;
+	for (int i = 0; i < 8; ++i) varies |= rd() != first;
+	std::printf(" random=%d", varies);
 	in_threads([&] { local_static(); });
 	std::printf(" static=%d,%d", inits.load(), local_static());
 
@@ -483,7 +499,7 @@ int main()
 	return 0;
 }
 EOF
-thr_want="mutex=4000 rec=1 timed=0,1 cv=1,1 once=1 static=1,1 future=42,7 exc=1 tldtor=1 detach=1 id=1 shared=1,0"
+thr_want="mutex=4000 rec=1 timed=0,1 cv=1,1 once=1 onceexc=1,2 random=1 static=1,1 future=42,7 exc=1 tldtor=1 detach=1 id=1 shared=1,0"
 for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
 	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
 	for speed in "" "--speed"; do
@@ -588,56 +604,25 @@ for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=
 	done
 done
 
-# What the libstdc++ OS port claims rtoskit-libc provides (0002-libstdcxx-add-rtoskit-libc-os-port.patch hard-codes
-# it, because configure runs no link tests on a cross target) must be there: each HAVE_ and _GLIBCXX_USE_ name in the
-# patch maps to a header, a macro or a function, and a program that refers to all of them must compile and link.
-# The list is read from the patch, so it cannot drift from what the check covers.
-port_patch=$(ls "${PROJECT_ROOT}"/compilers/arm-none-eabi/gcc-patches/0002-*.patch 2> /dev/null | head -1)
-port_funcs="" port_headers="" port_macros=""
-if [[ -n ${port_patch} ]]; then
-	while read -r n; do
-		case ${n} in
-		HAVE_TLS) ;;
-		HAVE_S_ISREG) port_macros+=" S_ISREG" ;;
-		HAVE_*_H) h=$(echo "${n#HAVE_}" | tr 'A-Z' 'a-z'); port_headers+=" $(echo "${h%_h}" | sed 's,^sys_,sys/,').h" ;;
-		_GLIBCXX_USE_CLOCK_*) port_macros+=" ${n#_GLIBCXX_USE_}"; port_funcs+=" clock_gettime" ;;
-		_GLIBCXX_USE_NANOSLEEP) port_funcs+=" nanosleep" ;;
-		_GLIBCXX_USE_SCHED_YIELD) port_funcs+=" sched_yield thrd_yield" ;;
-		HAVE_*) port_funcs+=" $(echo "${n#HAVE_}" | tr 'A-Z' 'a-z')" ;;
-		esac
-	done < <(sed -n '/^+++ b\/libstdc++-v3\/configure.ac/,$p' "${port_patch}" | sed -n 's/^+ *AC_DEFINE(\([A-Za-z0-9_]*\)).*/\1/p')
-fi
-port_funcs=$(echo "${port_funcs}" | tr ' ' '\n' | sort -u | grep . | tr '\n' ' ')
-if [[ -z ${port_funcs} ]]; then
-	fail "libstdc++ port: no names found in ${port_patch:-the 0002 patch}"
+# libstdc++ is configured from <rtoskit-libc.h> (0002-libstdcxx-add-rtoskit-libc-os-port.patch): the library defines
+# __LIBC_HAVE_<NAME> for each feature it has, and configure's compile tests turn each into libstdc++'s HAVE_<NAME>
+# (_GLIBCXX_USE_<NAME> for the clocks, nanosleep and sched_yield). The names are read from the installed header, so a
+# feature the library adds and the patch does not ask about shows here. The library's own tests check that each one is
+# declared and linked.
+printf '#include <rtoskit-libc.h>\n#include <bits/c++config.h>\n' > "${work}/features.cc"
+for name in $(echo '#include <rtoskit-libc.h>' | "${GXX}" -dM -E -x c++ - 2> /dev/null | sed -n 's/^#define __LIBC_HAVE_\([A-Z0-9_]*\) 1$/\1/p'); do
+	case ${name} in
+	CLOCK_REALTIME | CLOCK_MONOTONIC | NANOSLEEP | SCHED_YIELD) macro=_GLIBCXX_USE_${name} ;;
+	*) macro=_GLIBCXX_HAVE_${name} ;;
+	esac
+	printf '#ifndef %s\n#error libstdc++ lacks %s\n#endif\n' "${macro}" "${macro}" >> "${work}/features.cc"
+done
+if [[ $(grep -c '^#ifndef' "${work}/features.cc") -lt 60 ]]; then
+	fail "libstdc++ features: <rtoskit-libc.h> names fewer than 60 features"
+elif "${GXX}" -fsyntax-only -std=gnu++23 "${work}/features.cc" 2> "${work}/err.txt"; then
+	pass "libstdc++ features: everything <rtoskit-libc.h> names"
 else
-	{
-		for h in math.h stdlib.h time.h threads.h sched.h sys/stat.h ${port_headers}; do
-			echo "#if __has_include(<${h}>)"; echo "#include <${h}>"; echo "#endif"
-		done
-		for h in ${port_headers}; do
-			echo "#if !__has_include(<${h}>)"; echo "#error missing header ${h}"; echo "#endif"
-		done
-		for m in ${port_macros}; do
-			echo "#ifndef ${m}"; echo "#error missing macro ${m}"; echo "#endif"
-		done
-		echo "static const void *const refs[] = {"
-		for f in ${port_funcs}; do echo "	(const void *) ${f},"; done
-		echo "};"
-		echo "int main(int argc, char **argv) { (void) argv; return refs[argc] != 0; }"
-	} > "${work}/port.c"
-	for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m4 -mfloat-abi=hard" "-mcpu=cortex-m33"; do
-		name="libstdc++ port names [${options}]"
-		# shellcheck disable=SC2086
-		if ! LC_ALL=C "${GCC}" ${options} --specs=rtoskit-linux.specs -Os "${work}/port.c" -o "${work}/port.elf" 2> "${work}/err.txt"; then
-			missing=$(sed -n -e "s/.*: error: missing \(header\|macro\) \(.*\)/\2/p" \
-				-e "s/.*error: '\([A-Za-z0-9_]*\)' undeclared.*/\1/p" \
-				-e "s/.*undefined reference to \`\([A-Za-z0-9_]*\)'.*/\1/p" "${work}/err.txt" | sort -u | tr '\n' ' ' | sed 's/ $//')
-			fail "${name}: missing ${missing:-$(head -1 "${work}/err.txt")}"
-			continue
-		fi
-		pass "${name}"
-	done
+	fail "libstdc++ features: $(grep -o 'libstdc++ lacks [A-Za-z0-9_]*' "${work}/err.txt" | sed 's/libstdc++ lacks //' | tr '\n' ' ' | sed 's/ $//')"
 fi
 
 # The C11 thread model must not reach C: a C program (no threads of its own) links none of the library's mutex,

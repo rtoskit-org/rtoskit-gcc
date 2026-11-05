@@ -1,18 +1,24 @@
 libstdc++: add an rtoskit-libc OS port (--with-rtoskit-libc)
 
 libstdc++'s configure runs no link tests on a cross target. --with-newlib and
---with-picolibc hard-code what those libraries provide and use their ctype
-tables; with neither, the generic cross configuration needs a linkable target.
+--with-picolibc hard-code what those libraries provide; with neither, the
+generic cross configuration needs a linkable target.
 
 --with-rtoskit-libc selects config/os/generic, which needs only the ISO
-<ctype.h> functions, and defines what rtoskit-libc provides: the float math
-functions and their long double forms, strtof, aligned_alloc, quick_exit and
-at_quick_exit, thread-local storage, S_ISREG, <sys/types.h>, <inttypes.h>, <fcntl.h> and <unistd.h>,
-and the POSIX clocks (CLOCK_REALTIME, CLOCK_MONOTONIC), nanosleep and sched_yield, which std::chrono's clocks,
-std::this_thread::sleep_for and std::this_thread::yield use.
-The header probes compile as C in the compiler's default dialect, which before GCC 15 cannot
-parse the C23-only <inttypes.h> or <fcntl.h>.
-Names it lacks (memalign, link, setenv, sleep, ...) stay undefined.
+<ctype.h> functions, and asks the library what it provides the way the
+--with-picolibc branch does: the library installs <rtoskit-libc.h>, which
+defines __LIBC_HAVE_<NAME> for each feature it has (the float math functions
+and their long double forms, strtof, aligned_alloc, quick_exit and
+at_quick_exit, thread-local storage and __cxa_thread_atexit, S_ISREG,
+getentropy, <sys/types.h>, <sys/stat.h>, <inttypes.h>, <fcntl.h> and <unistd.h>,
+and the POSIX clocks, nanosleep and sched_yield that std::chrono's clocks,
+std::this_thread::sleep_for and std::this_thread::yield use), and a compile test
+against that header defines libstdc++'s HAVE_<NAME>, or _GLIBCXX_USE_<NAME> for
+the four time names. Which names libstdc++ asks about is here; whether the
+library has each is the library's, which tests the header against its archives.
+The probes compile as C in the compiler's default dialect, and the header is only
+macros. Names the header lacks (memalign, link, setenv, sleep, ...) stay
+undefined.
 
 The patch is the same for configure.ac and the generated configure, so no
 autoconf run is needed. It applies to GCC 14, 15 and 16.
@@ -20,137 +26,66 @@ autoconf run is needed. It applies to GCC 14, 15 and 16.
 diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
 --- a/libstdc++-v3/configure
 +++ b/libstdc++-v3/configure
-@@ -27525,7 +27525,133 @@
+@@ -27525,7 +27525,62 @@
  
    # First, test for "known" system libraries.  We may be using newlib even
    # on a hosted environment.
 -  if test "x${with_newlib}" = "xyes"; then
 +  if test "x${with_rtoskit_libc}" = "xyes"; then
-+    # rtoskit-libc: configure runs no link tests on a cross target, so say what the library provides, as the
-+    # newlib and picolibc blocks do. The ISO <ctype.h> functions are all os/generic needs.
++    # rtoskit-libc: configure runs no link tests on a cross target, so ask the library what it provides, as the
++    # picolibc block does. <rtoskit-libc.h> defines __LIBC_HAVE_<NAME> for each feature the library has, and a
++    # compile test against the installed headers finds each one. Which names libstdc++ asks about stays here;
++    # whether the library has each is the library's.
 +    os_include_dir="os/generic"
-+    $as_echo "#define HAVE_HYPOT 1" >>confdefs.h
++    for name in ACOSF ACOSL ALIGNED_ALLOC ASINF ASINL ATAN2F ATAN2L ATANF ATANL AT_QUICK_EXIT CEILF CEILL COSF COSHF COSHL \
++    COSL __CXA_THREAD_ATEXIT EXPF EXPL FABSF FABSL FCNTL_H FLOORF FLOORL FMODF FMODL FREXPF FREXPL GETENTROPY \
++    HYPOT HYPOTF HYPOTL INTTYPES_H LDEXPF LDEXPL LOG10F LOG10L LOGF LOGL MODFF MODFL POWF POWL QUICK_EXIT SINF \
++    SINHF SINHL SINL S_ISREG SQRTF SQRTL STRTOF SYS_STAT_H SYS_TYPES_H TANF TANHF TANHL TANL TLS UNISTD_H; do
++      cat confdefs.h - <<_ACEOF >conftest.$ac_ext
++/* end confdefs.h.  */
++#include <rtoskit-libc.h>
++int
++main ()
++{
 +
-+    $as_echo "#define HAVE_STRTOF 1" >>confdefs.h
++        #ifndef __LIBC_HAVE_$name
++        #error
++        #endif
++  ;
++  return 0;
++}
++_ACEOF
++if ac_fn_c_try_compile "$LINENO"; then :
++  cat >>confdefs.h <<_ACEOF
++#define HAVE_$name 1
++_ACEOF
 +
-+    $as_echo "#define HAVE_ACOSF 1" >>confdefs.h
++fi
++rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
++    done
++    for name in CLOCK_REALTIME CLOCK_MONOTONIC NANOSLEEP SCHED_YIELD; do
++      cat confdefs.h - <<_ACEOF >conftest.$ac_ext
++/* end confdefs.h.  */
++#include <rtoskit-libc.h>
++int
++main ()
++{
 +
-+    $as_echo "#define HAVE_ASINF 1" >>confdefs.h
++        #ifndef __LIBC_HAVE_$name
++        #error
++        #endif
++  ;
++  return 0;
++}
++_ACEOF
++if ac_fn_c_try_compile "$LINENO"; then :
++  cat >>confdefs.h <<_ACEOF
++#define _GLIBCXX_USE_$name 1
++_ACEOF
 +
-+    $as_echo "#define HAVE_ATAN2F 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_ATANF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_CEILF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_COSF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_COSHF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_EXPF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_FABSF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_FLOORF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_FMODF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_FREXPF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_HYPOTF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_LDEXPF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_LOG10F 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_LOGF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_MODFF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_POWF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_SINF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_SINHF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_SQRTF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_TANF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_TANHF 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_TLS 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_ALIGNED_ALLOC 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_AT_QUICK_EXIT 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_QUICK_EXIT 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_SYS_TYPES_H 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_INTTYPES_H 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_FCNTL_H 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_UNISTD_H 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_S_ISREG 1" >>confdefs.h
-+
-+    $as_echo "#define _GLIBCXX_USE_CLOCK_REALTIME 1" >>confdefs.h
-+
-+    $as_echo "#define _GLIBCXX_USE_CLOCK_MONOTONIC 1" >>confdefs.h
-+
-+    $as_echo "#define _GLIBCXX_USE_NANOSLEEP 1" >>confdefs.h
-+
-+    $as_echo "#define _GLIBCXX_USE_SCHED_YIELD 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_ACOSL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_ASINL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_ATAN2L 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_ATANL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_CEILL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_COSHL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_COSL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_EXPL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_FABSL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_FLOORL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_FMODL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_FREXPL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_HYPOTL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_LDEXPL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_LOG10L 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_LOGL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_MODFL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_POWL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_SINHL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_SINL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_SQRTL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_TANHL 1" >>confdefs.h
-+
-+    $as_echo "#define HAVE_TANL 1" >>confdefs.h
-+
++fi
++rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
++    done
 +  elif test "x${with_newlib}" = "xyes"; then
      os_include_dir="os/newlib"
      $as_echo "#define HAVE_HYPOT 1" >>confdefs.h
@@ -158,76 +93,32 @@ diff -ruN a/libstdc++-v3/configure b/libstdc++-v3/configure
 diff -ruN a/libstdc++-v3/configure.ac b/libstdc++-v3/configure.ac
 --- a/libstdc++-v3/configure.ac
 +++ b/libstdc++-v3/configure.ac
-@@ -338,7 +338,72 @@
+@@ -338,7 +338,28 @@
  
    # First, test for "known" system libraries.  We may be using newlib even
    # on a hosted environment.
 -  if test "x${with_newlib}" = "xyes"; then
 +  if test "x${with_rtoskit_libc}" = "xyes"; then
-+    # rtoskit-libc: configure runs no link tests on a cross target, so say what the library provides, as the
-+    # newlib and picolibc blocks do. The ISO <ctype.h> functions are all os/generic needs.
++    # rtoskit-libc: configure runs no link tests on a cross target, so ask the library what it provides, as the
++    # picolibc block does. <rtoskit-libc.h> defines __LIBC_HAVE_<NAME> for each feature the library has, and a
++    # compile test against the installed headers finds each one. Which names libstdc++ asks about stays here;
++    # whether the library has each is the library's.
 +    os_include_dir="os/generic"
-+    AC_DEFINE(HAVE_HYPOT)
-+    AC_DEFINE(HAVE_STRTOF)
-+    AC_DEFINE(HAVE_ACOSF)
-+    AC_DEFINE(HAVE_ASINF)
-+    AC_DEFINE(HAVE_ATAN2F)
-+    AC_DEFINE(HAVE_ATANF)
-+    AC_DEFINE(HAVE_CEILF)
-+    AC_DEFINE(HAVE_COSF)
-+    AC_DEFINE(HAVE_COSHF)
-+    AC_DEFINE(HAVE_EXPF)
-+    AC_DEFINE(HAVE_FABSF)
-+    AC_DEFINE(HAVE_FLOORF)
-+    AC_DEFINE(HAVE_FMODF)
-+    AC_DEFINE(HAVE_FREXPF)
-+    AC_DEFINE(HAVE_HYPOTF)
-+    AC_DEFINE(HAVE_LDEXPF)
-+    AC_DEFINE(HAVE_LOG10F)
-+    AC_DEFINE(HAVE_LOGF)
-+    AC_DEFINE(HAVE_MODFF)
-+    AC_DEFINE(HAVE_POWF)
-+    AC_DEFINE(HAVE_SINF)
-+    AC_DEFINE(HAVE_SINHF)
-+    AC_DEFINE(HAVE_SQRTF)
-+    AC_DEFINE(HAVE_TANF)
-+    AC_DEFINE(HAVE_TANHF)
-+    AC_DEFINE(HAVE_TLS)
-+    AC_DEFINE(HAVE_ALIGNED_ALLOC)
-+    AC_DEFINE(HAVE_AT_QUICK_EXIT)
-+    AC_DEFINE(HAVE_QUICK_EXIT)
-+    AC_DEFINE(HAVE_SYS_TYPES_H)
-+    AC_DEFINE(HAVE_INTTYPES_H)
-+    AC_DEFINE(HAVE_FCNTL_H)
-+    AC_DEFINE(HAVE_UNISTD_H)
-+    AC_DEFINE(HAVE_S_ISREG)
-+    AC_DEFINE(_GLIBCXX_USE_CLOCK_REALTIME)
-+    AC_DEFINE(_GLIBCXX_USE_CLOCK_MONOTONIC)
-+    AC_DEFINE(_GLIBCXX_USE_NANOSLEEP)
-+    AC_DEFINE(_GLIBCXX_USE_SCHED_YIELD)
-+    AC_DEFINE(HAVE_ACOSL)
-+    AC_DEFINE(HAVE_ASINL)
-+    AC_DEFINE(HAVE_ATAN2L)
-+    AC_DEFINE(HAVE_ATANL)
-+    AC_DEFINE(HAVE_CEILL)
-+    AC_DEFINE(HAVE_COSHL)
-+    AC_DEFINE(HAVE_COSL)
-+    AC_DEFINE(HAVE_EXPL)
-+    AC_DEFINE(HAVE_FABSL)
-+    AC_DEFINE(HAVE_FLOORL)
-+    AC_DEFINE(HAVE_FMODL)
-+    AC_DEFINE(HAVE_FREXPL)
-+    AC_DEFINE(HAVE_HYPOTL)
-+    AC_DEFINE(HAVE_LDEXPL)
-+    AC_DEFINE(HAVE_LOG10L)
-+    AC_DEFINE(HAVE_LOGL)
-+    AC_DEFINE(HAVE_MODFL)
-+    AC_DEFINE(HAVE_POWL)
-+    AC_DEFINE(HAVE_SINHL)
-+    AC_DEFINE(HAVE_SINL)
-+    AC_DEFINE(HAVE_SQRTL)
-+    AC_DEFINE(HAVE_TANHL)
-+    AC_DEFINE(HAVE_TANL)
++    for name in ACOSF ACOSL ALIGNED_ALLOC ASINF ASINL ATAN2F ATAN2L ATANF ATANL AT_QUICK_EXIT CEILF CEILL COSF COSHF COSHL \
++    COSL __CXA_THREAD_ATEXIT EXPF EXPL FABSF FABSL FCNTL_H FLOORF FLOORL FMODF FMODL FREXPF FREXPL GETENTROPY \
++    HYPOT HYPOTF HYPOTL INTTYPES_H LDEXPF LDEXPL LOG10F LOG10L LOGF LOGL MODFF MODFL POWF POWL QUICK_EXIT SINF \
++    SINHF SINHL SINL S_ISREG SQRTF SQRTL STRTOF SYS_STAT_H SYS_TYPES_H TANF TANHF TANHL TANL TLS UNISTD_H; do
++      AC_TRY_COMPILE([#include <rtoskit-libc.h>], [
++        #ifndef __LIBC_HAVE_$name
++        #error
++        #endif], [AC_DEFINE_UNQUOTED([HAVE_$name], 1)], [])
++    done
++    for name in CLOCK_REALTIME CLOCK_MONOTONIC NANOSLEEP SCHED_YIELD; do
++      AC_TRY_COMPILE([#include <rtoskit-libc.h>], [
++        #ifndef __LIBC_HAVE_$name
++        #error
++        #endif], [AC_DEFINE_UNQUOTED([_GLIBCXX_USE_$name], 1)], [])
++    done
 +  elif test "x${with_newlib}" = "xyes"; then
      os_include_dir="os/newlib"
      AC_DEFINE(HAVE_HYPOT)
