@@ -1,0 +1,79 @@
+gthr-posix: use rtoskit-libc's pthreads as a static library provides them
+
+libgcc and libstdc++ reach threads only through gthr.h, and --enable-threads=posix
+selects gthr-posix.h, which fits rtoskit-libc's <pthread.h> but for two things that
+come from the library being linked statically on a bare-metal core.
+
+__gthread_active_p. Outside glibc and Bionic, gthr-posix.h decides that threads
+are active from a weak reference to pthread_cancel. In a static link a weak
+reference pulls no archive member, and rtoskit-libc has no pthread_cancel, so every
+mutex in a program would be a no-op. libstdc++'s os/generic port already turns the
+weak references off for libstdc++ (_GLIBCXX_GTHREAD_USE_WEAK 0); libgcc's copy of
+the header has no such port, so when the C library installs <rtoskit-libc.h>
+(__RTOSKIT_LIBC__) the header turns them off itself, which makes every pthread call
+a strong reference and __gthread_active_p constant 1.
+
+__gthread_once. pthread_once is a C function with no unwind tables, so an exception
+from the function of a std::call_once would terminate the program and leave the flag
+set. rtoskit-libc's __libc_call_once_eh does the same on the same flag (its
+pthread_once_t has once_flag's layout), is built with exception tables, runs the
+function under a cleanup that resets the flag, and so lets the exception travel and
+the next std::call_once run the function again. __gthread_once calls it under
+__RTOSKIT_LIBC__. It is declared here with an assembler label, so the header needs
+none of the library's headers beyond <pthread.h>.
+
+The patch applies to GCC 14, 15 and 16. Nothing else is needed for the posix
+model: libstdc++ finds pthread_cond_clockwait and pthread_mutex_clocklock with its
+own compile tests, so steady_clock waits use CLOCK_MONOTONIC, not a converted
+deadline.
+
+diff -ruN a/libgcc/gthr-posix.h b/libgcc/gthr-posix.h
+--- a/libgcc/gthr-posix.h
++++ b/libgcc/gthr-posix.h
+@@ -35,4 +35,32 @@
+ #include <pthread.h>
+ 
++/* A C library that provides the pthreads for a static program says so with
++   <rtoskit-libc.h>.  */
++#if defined __has_include
++# if __has_include(<rtoskit-libc.h>)
++#  include <rtoskit-libc.h>
++# endif
++#endif
++
++#ifdef __RTOSKIT_LIBC__
++/* A static link resolves no weak reference to a function that no object pulls
++   in, so the weak pthread_cancel probe in __gthread_active_p would find the
++   threads inactive.  Every call is a strong reference instead.  */
++# undef GTHREAD_USE_WEAK
++# define GTHREAD_USE_WEAK 0
++
++/* pthread_once on the same flag, built with exception tables: an exception from
++   the function leaves the flag unset.  Declared by its label, so that no
++   header of the library but <pthread.h> is needed here; once_flag and
++   pthread_once_t have the same layout.  */
++# ifdef __cplusplus
++extern "C"
++# else
++extern
++# endif
++void __gthread_rtoskit_once (pthread_once_t *, void (*) (void))
++  __asm__ ("__libc_call_once_eh");
++#endif
++
+ #if ((defined(_LIBOBJC) || defined(_LIBOBJC_WEAK)) \
+      || !defined(_GTHREAD_USE_MUTEX_TIMEDLOCK))
+@@ -743,8 +771,13 @@
+ __gthread_once (__gthread_once_t *__once, void (*__func) (void))
+ {
++#ifdef __RTOSKIT_LIBC__
++  __gthread_rtoskit_once (__once, __func);
++  return 0;
++#else
+   if (__gthread_active_p ())
+     return __gthrw_(pthread_once) (__once, __func);
+   else
+     return -1;
++#endif
+ }
+ 

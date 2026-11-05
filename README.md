@@ -22,8 +22,16 @@ Each toolchain has:
   or file unless the executable can be opened (it cannot on a board; use `addr2line` on the ELF).
   `gcc-patches/0003-libbacktrace-use-atomic-compare-exchange.patch` makes libbacktrace compare and swap through the
   `__atomic` builtins, which v6-m has as library calls and the legacy `__sync` ones it does not.
-  Not there yet: `std::thread` and the other threading classes
-  ([#2](https://github.com/sgstreet/rtoskit-gcc/issues/2)), and `std::filesystem` does nothing useful.
+  Threads are configured `--enable-threads=posix` over rtoskit-libc's `<pthread.h>`, so `std::thread`, `std::mutex` and
+  the other mutex classes (`std::shared_mutex` too), `std::condition_variable`, `std::call_once`, thread-safe local
+  statics, `std::future` and `std::async` work, and `steady_clock` waits use `pthread_cond_clockwait` and
+  `pthread_mutex_clocklock`. `gcc-patches/0004-gthr-posix-use-rtoskit-libc-pthreads.patch` makes GCC's `gthr-posix.h`
+  call every pthread function strongly, since a static link would otherwise find threads inactive, and send
+  `std::call_once` through rtoskit-libc's `__libc_call_once_eh`, so an exception from its function leaves the flag unset
+  and the next call runs the function again. `std::thread` takes the library's default stack size and priority.
+  `<mutex>` includes `<stdlib.h>`, which declares C23's `once_flag`, so `once_flag` is ambiguous with `std::once_flag`
+  under `using namespace std`.
+  `std::filesystem` does nothing useful.
 
 ## Dependencies
 
@@ -106,7 +114,7 @@ Three scripts check an unpacked toolchain; the first two run in CI on every tool
 
 | Script | Checks |
 |---|---|
-| `validate-toolchain` | The multilib list, which multilib each core selects, the default TLS model, gdb with Python, and that a threaded `printf`/`sinf`/`thread_local` program links with every multilib (release and speed) and runs under `qemu-arm` |
+| `validate-toolchain` | The multilib list, which multilib each core selects, the default TLS model, gdb with Python, and that a threaded `printf`/`sinf`/`thread_local` program links with every multilib (release and speed) and runs under `qemu-arm`. For C++ it runs the threading classes (`std::thread`, the mutexes, `std::condition_variable`, `std::call_once`, `std::future`) and times `sleep_for`, `wait_for` and `try_lock_for` against `steady_clock` and `system_clock`. It checks the POSIX thread model and that libstdc++ was configured with every feature `<rtoskit-libc.h>` names. A C program must link none of the thread functions |
 | `test-installed` | rtoskit-libc's unit tests built against the *installed* toolchain only (no in-tree include or library paths) for eight core options, release and speed, and run under `qemu-arm`. Tests that need the library's internals are skipped. |
 | `gcc-torture` | GCC's own `gcc.c-torture/execute` tests (about 1700 programs, eight optimisation levels each) through DejaGnu on the multilib the options select. Failures that cannot pass here are listed in `tools/dejagnu/torture.xfail`. |
 
@@ -143,7 +151,7 @@ If the pinned crosstool-NG does not package a version, `--ct-ng=latest` (or `--c
 | `compilers/arm-none-eabi/arm-none-eabi.defconfig.in` | The crosstool-NG configuration, shared by every version |
 | `compilers/arm-none-eabi/crosstool-ng/` | Laid over a copy of the crosstool-NG submodule: the `rtoskit` libc backend |
 | `compilers/arm-none-eabi/t-rtoskit`, `rtoskit/` | The multilib list, its map and the spec files |
-| `compilers/arm-none-eabi/gcc-patches/` | GCC patches applied to every version (the libstdc++ OS port) |
+| `compilers/arm-none-eabi/gcc-patches/` | GCC patches applied to every version (the libstdc++ OS port, libbacktrace, the POSIX thread model) |
 | `external/` | Submodules: crosstool-NG and rtoskit-libc |
 | `tools/scripts/` | `gcc-releases` (versions), `validate-toolchain`, `test-installed`, `gcc-torture` (validation) |
 | `tools/dejagnu/` | The DejaGnu board for `gcc-torture` and its expected failures |
