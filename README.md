@@ -15,7 +15,9 @@ Each toolchain has:
   `__cxa_thread_atexit`, with exceptions, RTTI, `thread_local` destructors and a hosted libstdc++ (`<string>`,
   `<vector>`, `<iostream>`, `<regex>`, `<ranges>`, `<chrono>`, `std::println`, ...), without wide characters.
   libstdc++ is configured by `compilers/arm-none-eabi/gcc-patches/0002-libstdcxx-add-rtoskit-libc-os-port.patch`
-  (`--with-rtoskit-libc`). `-fno-exceptions` and `-fno-rtti` work. `std::stacktrace` needs `-lstdc++exp` (libbacktrace)
+  (`--with-rtoskit-libc`), which asks rtoskit-libc what it provides through the `<rtoskit-libc.h>` header it installs.
+  `std::random_device` reads `getentropy`, which fails on a board whose port has no entropy source.
+  `-fno-exceptions` and `-fno-rtti` work. `std::stacktrace` needs `-lstdc++exp` (libbacktrace)
   and, under `-fno-exceptions`, `-funwind-tables`; it captures frames on the target, but entries have no description
   or file unless the executable can be opened (it cannot on a board; use `addr2line` on the ELF).
   `gcc-patches/0003-libbacktrace-use-atomic-compare-exchange.patch` makes libbacktrace compare and swap through the
