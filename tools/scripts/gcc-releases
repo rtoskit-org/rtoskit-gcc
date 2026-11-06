@@ -29,8 +29,10 @@ COMPILER_DIR=${PROJECT_ROOT}/compilers/arm-none-eabi
 VERSIONS_INC=${COMPILER_DIR}/versions.inc
 OVERLAY=${COMPILER_DIR}/crosstool-ng
 REMOVE_LIST=${COMPILER_DIR}/crosstool-ng.remove
-CTNG=${PROJECT_ROOT}/external/crosstool-ng
-LIBC=${PROJECT_ROOT}/external/rtoskit-libc
+LIBC_PKG=${OVERLAY}/packages/rtoskit
+CTNG_REPO=${CTNG_REPO:-https://github.com/crosstool-ng/crosstool-ng}
+CTNG_RAW=${CTNG_RAW:-https://raw.githubusercontent.com/crosstool-ng/crosstool-ng}
+LIBC_REPO=${LIBC_REPO:-https://github.com/sgstreet/rtoskit-libc}
 DOWNLOADS=${PROJECT_ROOT}/downloads
 
 dry_run=
@@ -46,17 +48,18 @@ Commands:
   update             Move every configured major to its newest minor release.
   rotate [MAJOR]     Add the newest released major (or MAJOR) and drop the oldest, then
                      update. With 17 released, 16 15 14 becomes 17 16 15.
-  bump-libc [REF]    Move the external/rtoskit-libc submodule to REF (a tag or branch;
-                     default: origin/main) and stage it.
+  bump-libc [VERSION]  Build with rtoskit-libc release VERSION (default: the newest v* tag): fetch its
+                     source archive, write the crosstool-NG package with its digests, set RTOSKIT_LIBC_VERSION.
 
 Options:
   --dry-run          Show what would change; write nothing.
-  --ct-ng=REF|latest Move the external/crosstool-ng submodule to REF (or origin/master)
-                     when the pinned commit does not package a needed version.
+  --ct-ng=REF|latest Move the crosstool-NG commit to REF (or its master) when the pinned
+                     commit does not package a needed version.
 
-Files changed (staged by git add where noted, never committed):
-  ${VERSIONS_INC#${PROJECT_ROOT}/}   GCC_VERSIONS
-  external/crosstool-ng               submodule commit (git add)
+Files changed (never committed or staged):
+  ${VERSIONS_INC#${PROJECT_ROOT}/}   GCC_VERSIONS, RTOSKIT_LIBC_VERSION, CROSSTOOL_NG_REV and CROSSTOOL_NG_SHA256
+  compilers/arm-none-eabi/crosstool-ng/packages/rtoskit/<version>/
+                                      the rtoskit-libc release package (bump-libc)
   compilers/arm-none-eabi/crosstool-ng/packages/gcc/<version>/
                                       only when no crosstool-NG commit has the version
 EOF
@@ -98,15 +101,45 @@ newest_major() {
 	ftp_versions | tail -1 | cut -d. -f1
 }
 
+# A variable of versions.inc
+inc_get() {
+	sed -n "s/^$1 *[?:]*= *//p" "${VERSIONS_INC}" | head -1
+}
+
+inc_set() {
+	sed -i "s/^\\($1 *[?:]*= *\\).*/\\1$2/" "${VERSIONS_INC}"
+}
+
+# The commit a crosstool-NG ref (a branch, a tag or a commit) names
+ctng_resolve() {
+	local ref=$1
+	if [[ ${ref} =~ ^[0-9a-f]{40}$ ]]; then
+		echo "${ref}"
+		return
+	fi
+	git ls-remote "${CTNG_REPO}.git" "${ref}" "refs/heads/${ref}" "refs/tags/${ref}" | head -1 | cut -f1
+}
+
+ctng_head() {
+	git ls-remote "${CTNG_REPO}.git" refs/heads/master | cut -f1
+}
+
 # Does a crosstool-NG revision package a GCC version? (an overlay package counts for any revision)
 ctng_has() {
 	local rev=$1 version=$2
 	[[ -f "${OVERLAY}/packages/gcc/${version}/chksum" ]] && return 0
-	git -C "${CTNG}" cat-file -e "${rev}:packages/gcc/${version}/chksum" 2>/dev/null
+	curl -fsIL -o /dev/null "${CTNG_RAW}/${rev}/packages/gcc/${version}/chksum" 2>/dev/null
 }
 
-ctng_fetch() {
-	git -C "${CTNG}" fetch -q origin master || die "cannot fetch crosstool-NG"
+# The source archive of a crosstool-NG commit, in downloads/ (printed)
+ctng_archive() {
+	local rev=$1 file="${DOWNLOADS}/crosstool-ng-$1.tar.gz"
+	if [[ ! -f "${file}" ]]; then
+		mkdir -p "${DOWNLOADS}"
+		curl -fsSL --retry 3 -o "${file}.part" "${CTNG_REPO}/archive/${rev}.tar.gz" || die "cannot download crosstool-NG ${rev}"
+		mv "${file}.part" "${file}"
+	fi
+	echo "${file}"
 }
 
 write_versions() {
@@ -120,9 +153,8 @@ write_versions() {
 
 cmd_check() {
 	local version latest rev_pin rev_head newest
-	rev_pin=$(git -C "${CTNG}" rev-parse HEAD)
-	ctng_fetch
-	rev_head=$(git -C "${CTNG}" rev-parse origin/master)
+	rev_pin=$(inc_get CROSSTOOL_NG_REV)
+	rev_head=$(ctng_head)
 
 	printf '%-10s %-10s %-9s %-9s %s\n' MAJOR CONFIGURED NEWEST "PINNED-NG" "NG-MASTER"
 	for version in $(configured); do
@@ -135,6 +167,7 @@ cmd_check() {
 	note ""
 	note "newest released major: ${newest}"
 	note "crosstool-NG pinned:   ${rev_pin:0:12}  master: ${rev_head:0:12}"
+	note "rtoskit-libc release:  $(inc_get RTOSKIT_LIBC_VERSION)  newest tag: $(libc_newest)"
 	if [[ " $(configured) " != *" $(latest_of_major "${newest}") "* ]]; then
 		note "a newer major than the configured set exists: run 'gcc-releases rotate'"
 	fi
@@ -145,7 +178,7 @@ cmd_check() {
 make_overlay() {
 	local version=$1 major rev have src old tmp
 	major=$(major_of "${version}")
-	rev=$(git -C "${CTNG}" rev-parse origin/master)
+	rev=$(ctng_head)
 
 	if [[ -n "${dry_run}" ]]; then
 		note "would create overlay packages/gcc/${version} (no crosstool-NG revision packages it)"
@@ -153,7 +186,9 @@ make_overlay() {
 	fi
 
 	# The nearest package to start from: the same major, else the newest lower one
-	have=$(git -C "${CTNG}" ls-tree --name-only "${rev}" packages/gcc/ | sed 's|packages/gcc/||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)
+	tmp=$(mktemp -d)
+	tar -xzf "$(ctng_archive "${rev}")" -C "${tmp}" --strip-components=1 --wildcards '*/packages/gcc'
+	have=$(find "${tmp}/packages/gcc" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)
 	src=$(echo "${have}" | grep -E "^${major}\\." | tail -1 || true)
 	if [[ -z "${src}" ]]; then
 		src=$(echo "${have}" | awk -F. -v m="${major}" '$1 < m' | tail -1)
@@ -161,11 +196,8 @@ make_overlay() {
 	fi
 	[[ -n "${src}" ]] || die "no crosstool-NG package to start ${version} from"
 
-	tmp=$(mktemp -d)
-	git -C "${CTNG}" archive "${rev}" "packages/gcc/${src}" | tar -x -C "${tmp}"
 	mkdir -p "${OVERLAY}/packages/gcc/${version}"
 	cp -a "${tmp}/packages/gcc/${src}/." "${OVERLAY}/packages/gcc/${version}/"
-	rm -rf "${tmp}"
 
 	# Digests of the .tar.xz, the first of the package's archive formats
 	mkdir -p "${DOWNLOADS}"
@@ -188,28 +220,29 @@ make_overlay() {
 	done
 
 	# A new major also has to be in the package's milestones
-	if ! git -C "${CTNG}" show "${rev}:packages/gcc/package.desc" | grep -q "^milestones=.* ${major}'"; then
-		git -C "${CTNG}" show "${rev}:packages/gcc/package.desc" | sed "s/^\\(milestones='.*\\)'/\\1 ${major}'/" > "${OVERLAY}/packages/gcc/package.desc"
+	if ! grep -q "^milestones=.* ${major}'" "${tmp}/packages/gcc/package.desc"; then
+		sed "s/^\\(milestones='.*\\)'/\\1 ${major}'/" "${tmp}/packages/gcc/package.desc" > "${OVERLAY}/packages/gcc/package.desc"
 		note "added ${major} to the milestones in the overlay packages/gcc/package.desc"
 	fi
+	rm -rf "${tmp}"
 }
 
 # Make sure some crosstool-NG revision packages every version in the list
 ensure_ctng() {
-	local version rev_pin rev_head missing=''
-	rev_pin=$(git -C "${CTNG}" rev-parse HEAD)
+	local version rev_pin rev_head missing='' sha
+	rev_pin=$(inc_get CROSSTOOL_NG_REV)
 	for version in "$@"; do
 		ctng_has "${rev_pin}" "${version}" || missing="${missing} ${version}"
 	done
 	[[ -n "${missing}" ]] || return 0
 
-	ctng_fetch
-	rev_head=$(git -C "${CTNG}" rev-parse origin/master)
+	rev_head=$(ctng_head)
 	local move_to=''
 	case "${ctng_target}" in
 		latest) move_to=${rev_head} ;;
 		"") ;;
-		*) move_to=$(git -C "${CTNG}" rev-parse "${ctng_target}^{commit}") ;;
+		*) move_to=$(ctng_resolve "${ctng_target}")
+		   [[ -n "${move_to}" ]] || die "no such crosstool-NG ref: ${ctng_target}" ;;
 	esac
 
 	if [[ -n "${move_to}" ]]; then
@@ -217,11 +250,12 @@ ensure_ctng() {
 			ctng_has "${move_to}" "${version}" || note "warning: crosstool-NG ${move_to:0:12} does not package ${version} either"
 		done
 		if [[ -n "${dry_run}" ]]; then
-			note "would move external/crosstool-ng to ${move_to:0:12}"
+			note "would move crosstool-NG to ${move_to:0:12}"
 		else
-			git -C "${CTNG}" checkout -q "${move_to}"
-			git -C "${PROJECT_ROOT}" add external/crosstool-ng
-			note "external/crosstool-ng -> ${move_to:0:12} (staged)"
+			sha=$(sha256sum "$(ctng_archive "${move_to}")" | cut -d' ' -f1)
+			inc_set CROSSTOOL_NG_REV "${move_to}"
+			inc_set CROSSTOOL_NG_SHA256 "${sha}"
+			note "crosstool-NG -> ${move_to:0:12} (CROSSTOOL_NG_REV and CROSSTOOL_NG_SHA256 in versions.inc)"
 		fi
 		for version in ${missing}; do
 			ctng_has "${move_to}" "${version}" || make_overlay "${version}"
@@ -230,7 +264,7 @@ ensure_ctng() {
 		note "crosstool-NG ${rev_pin:0:12} does not package:${missing}"
 		for version in ${missing}; do
 			if ctng_has "${rev_head}" "${version}"; then
-				note "  ${version}: packaged by crosstool-NG master ${rev_head:0:12}; rerun with --ct-ng=latest to move the submodule"
+				note "  ${version}: packaged by crosstool-NG master ${rev_head:0:12}; rerun with --ct-ng=latest to move to it"
 			else
 				note "  ${version}: not packaged by crosstool-NG master either; generating an overlay package"
 				make_overlay "${version}"
@@ -283,17 +317,37 @@ cmd_rotate() {
 	write_versions "${new}"
 }
 
+# The newest v<version> tag of rtoskit-libc, without the v
+libc_newest() {
+	git ls-remote --tags --refs "${LIBC_REPO}.git" 'v[0-9]*' | sed -n 's|.*refs/tags/v||p' | sort -V | tail -1
+}
+
+# Build with an rtoskit-libc release: crosstool-NG downloads the tag's source archive (packages/rtoskit/<version>), so
+# the package carries the digests of that archive. Only one release is packaged at a time.
 cmd_bump_libc() {
-	local ref=${1:-origin/main} sha
-	git -C "${LIBC}" fetch -q --tags origin || die "cannot fetch rtoskit-libc"
-	sha=$(git -C "${LIBC}" rev-parse "${ref}^{commit}") || die "no such ref: ${ref}"
+	local version=${1:-} file alg dir
+	version=${version#v}
+	[[ -n "${version}" ]] || version=$(libc_newest)
+	[[ -n "${version}" ]] || die "no rtoskit-libc release found at ${LIBC_REPO}"
 	if [[ -n "${dry_run}" ]]; then
-		note "would move external/rtoskit-libc to ${ref} (${sha:0:12})"
+		note "would build with rtoskit-libc ${version} (was $(inc_get RTOSKIT_LIBC_VERSION))"
 		return
 	fi
-	git -C "${LIBC}" checkout -q "${sha}"
-	git -C "${PROJECT_ROOT}" add external/rtoskit-libc
-	note "external/rtoskit-libc -> ${ref} (${sha:0:12}) (staged)"
+	file="${DOWNLOADS}/v${version}.tar.gz"
+	mkdir -p "${DOWNLOADS}"
+	curl -fsSL --retry 3 -o "${file}.part" "${LIBC_REPO}/archive/refs/tags/v${version}.tar.gz" || die "cannot download rtoskit-libc v${version}"
+	mv "${file}.part" "${file}"
+	for dir in "${LIBC_PKG}"/*/; do
+		[[ -d "${dir}" && "${dir%/}" != "${LIBC_PKG}/${version}" ]] && rm -rf "${dir}"
+	done
+	mkdir -p "${LIBC_PKG}/${version}"
+	: > "${LIBC_PKG}/${version}/version.desc"
+	: > "${LIBC_PKG}/${version}/chksum"
+	for alg in md5 sha1 sha256 sha512; do
+		echo "${alg} v${version}.tar.gz $(${alg}sum "${file}" | cut -d' ' -f1)" >> "${LIBC_PKG}/${version}/chksum"
+	done
+	inc_set RTOSKIT_LIBC_VERSION "${version}"
+	note "rtoskit-libc ${version}: packages/rtoskit/${version}/chksum written, RTOSKIT_LIBC_VERSION set"
 }
 
 command=
@@ -309,13 +363,12 @@ for arg in "$@"; do
 done
 
 [[ -f "${VERSIONS_INC}" ]] || die "missing ${VERSIONS_INC}"
-[[ -e "${CTNG}/.git" ]] || die "external/crosstool-ng is not initialised (run make setup)"
 
 case "${command}" in
 	check) cmd_check ;;
 	update) cmd_update ;;
 	rotate) cmd_rotate "${args[0]:-}" ;;
-	bump-libc) [[ -e "${LIBC}/.git" ]] || die "external/rtoskit-libc is not initialised (run make setup)"; cmd_bump_libc "${args[0]:-}" ;;
+	bump-libc) cmd_bump_libc "${args[0]:-}" ;;
 	"") usage; exit 1 ;;
 	*) die "unknown command ${command}" ;;
 esac

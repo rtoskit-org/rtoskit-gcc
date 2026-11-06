@@ -2,7 +2,8 @@
 # Copyright (C) 2026 Red Rocket Computing, LLC
 # Licensed under the GPL v2 or later. See COPYING in the root of this package
 #
-# rtoskit-libc builds with its own make build, once per architecture
+# rtoskit-libc is a crosstool-NG package (packages/rtoskit): the release archive named by the package, checked
+# against its digests. It builds with its own make build, once per architecture
 # (ARCH_CROSS) and build type, through its "make library" goal for parent
 # builds. Each GCC multilib is mapped to an ARCH_CROSS by
 # CT_LIBC_RTOSKIT_MULTILIB_MAP. Headers are per target triple, so one copy
@@ -65,7 +66,11 @@ rtoskit_main()
         [ -n "${built[${arch}]}" ] && continue
         for build_type in ${CT_LIBC_RTOSKIT_BUILD_TYPES}; do
             CT_DoLog EXTRA "Building C library for ${arch} (${build_type})"
+            # The library's make build has no variable for extra compiler flags, and sets its own CFLAGS and
+            # LIBC_CFLAGS, which a command-line value would replace. The compiler it runs is its CC, so the
+            # flags go there (the assembler sources pass through the same driver, and ignore them).
             rtoskit_make \
+                CC="${cross_compile}${CT_CC}${CT_LIBC_RTOSKIT_CFLAGS:+ ${CT_LIBC_RTOSKIT_CFLAGS}}" \
                 PROJECT_ROOT="${CT_SRC_DIR}/rtoskit" \
                 TOOLS_ROOT="${CT_SRC_DIR}/rtoskit/tools" \
                 OUTPUT_ROOT="${build_dir}" \

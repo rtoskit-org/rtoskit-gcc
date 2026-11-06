@@ -103,7 +103,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: downloads
-          key: downloads-${{ matrix.gcc }}-${{ hashFiles('.gitmodules', 'compilers/arm-none-eabi/versions.inc') }}
+          key: downloads-${{ matrix.gcc }}-${{ hashFiles('compilers/arm-none-eabi/versions.inc') }}
           restore-keys: downloads-${{ matrix.gcc }}-
 
       - name: Build GCC ${{ matrix.gcc }}
