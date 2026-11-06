@@ -1,0 +1,26 @@
+# How GitHub groups the pull requests in a release's generated notes (docs/release.md).
+# A pull request goes in the first category whose label it carries; unlabelled ones are listed under
+# "Other changes". Label a pull request "skip-release-notes" to leave it out.
+changelog:
+  exclude:
+    labels:
+      - skip-release-notes
+  categories:
+    - title: Breaking changes (a different libc, GCC or ABI)
+      labels:
+        - breaking
+    - title: New features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: GCC and rtoskit-libc versions
+      labels:
+        - versions
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Other changes
+      labels:
+        - '*'

@@ -134,6 +134,12 @@ They need `qemu-arm` (`qemu-user`), and `gcc-torture` also `runtest` (`dejagnu`)
 - **Variable `CI_RUNNER`** (optional): the label of a larger runner. A build uses about 15 GB of disk and takes an hour or more on a standard runner.
 - The build uses `BUILD_MANUALS=n` (no PDF or HTML manuals), which is also available locally.
 
+## Releases
+
+A release is a signed tag `vX.Y.Z`: `.github/workflows/release.yml` builds and tests every toolchain with CI's gate,
+attests them and opens a draft GitHub release holding the archives, `SHA256SUMS` and the notes. See
+[docs/release.md](docs/release.md).
+
 ## Updating the GCC versions
 
 `compilers/arm-none-eabi/versions.inc` lists the versions. `tools/scripts/gcc-releases` keeps it current and never
