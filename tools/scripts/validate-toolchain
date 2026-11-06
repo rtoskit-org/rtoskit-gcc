@@ -660,6 +660,21 @@ else
 	fail "libstdc++ threads: $(grep -m1 -E 'error' "${work}/err.txt" | sed 's/.*error: //')"
 fi
 
+# <stdlib.h> declares C23's once_flag only in C (rtoskit-libc 0.5.2): in C++ it was ambiguous with std::once_flag
+# under using namespace std, once <mutex> and anything that reaches <cstdlib> were both included.
+cat > "${work}/onceflag.cc" <<'EOF'
+#include <mutex>
+#include <string>
+#include <cmath>
+using namespace std;
+once_flag flag;
+EOF
+if "${GXX}" -fsyntax-only -std=gnu++23 "${work}/onceflag.cc" 2> "${work}/err.txt"; then
+	pass "libstdc++ once_flag is not ambiguous under using namespace std"
+else
+	fail "libstdc++ once_flag: $(grep -m1 -E 'error' "${work}/err.txt" | sed 's/.*error: //')"
+fi
+
 # The thread model must not reach C: a C program (no threads of its own) links none of the library's mutex,
 # condition variable, thread, key or call_once functions, C11's or POSIX's.
 cat > "${work}/plain.c" <<'EOF'
