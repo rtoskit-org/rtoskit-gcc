@@ -11,7 +11,7 @@
 #     Author: Stephen Street (stephen@redrocketcomputing.com)
 #
 
-# The toolchain gate: build each toolchain in compilers/arm-none-eabi/versions.inc from scratch, then
+# The toolchain check: build each toolchain in compilers/arm-none-eabi/versions.inc from scratch, then
 #  - tools/scripts/validate-toolchain: multilibs, core selection, TLS default, gdb Python, and a threaded
 #    program linked with every multilib and run under qemu-arm;
 #  - tools/scripts/test-installed: rtoskit-libc's unit tests built against the installed toolchain only.
@@ -20,9 +20,9 @@
 # A build uses about 15 GB of disk and an hour or more on a standard runner: set the repository variable
 # CI_RUNNER to the label of a larger runner to speed it up.
 #
-# It does not run on pull requests or pushes: a run is about six runner-hours, so it runs only on request
-# (workflow_dispatch) and as the release gate. release.yml calls it on a release tag, and takes the toolchains
-# it uploads. Add pull_request and push triggers back here to run it on every change.
+# It does not run on pull requests, pushes or releases: a run is about six runner-hours, so it runs only on
+# request (workflow_dispatch). The release workflow does not call it either: releases are built and tested
+# locally. Add pull_request and push triggers back here to run it on every change.
 name: ci
 
 on:
@@ -32,12 +32,6 @@ on:
         description: Also run the GCC C torture tests (about 30 minutes per toolchain)
         type: boolean
         default: false
-  workflow_call:
-    inputs:
-      ref:
-        description: The ref to build (release.yml passes its tag); the calling event's own ref when empty
-        type: string
-        default: ''
 
 permissions:
   contents: read
@@ -52,8 +46,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ inputs.ref }}
       - name: shellcheck
         run: shellcheck -S warning tools/scripts/gcc-releases tools/scripts/validate-toolchain tools/scripts/test-installed tools/scripts/gcc-torture
 
@@ -64,8 +56,6 @@ jobs:
       gcc: ${{ steps.list.outputs.gcc }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ inputs.ref }}
       - name: GCC versions to build
         id: list
         run: |
@@ -84,8 +74,6 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v5
-        with:
-          ref: ${{ inputs.ref }}
 
       # One toolchain build takes about 15 GB; the runner image carries tools that are not needed here
       - name: Free disk space

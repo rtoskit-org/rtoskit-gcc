@@ -11,13 +11,14 @@
 #     Author: Stephen Street (stephen@redrocketcomputing.com)
 #
 
-# The release (docs/release.md). Pushing a tag vX.Y.Z runs the toolchain gate, ci.yml, on the tagged commit:
-# every toolchain in compilers/arm-none-eabi/versions.inc is built from scratch, validated and tested. It then
-# attests the toolchains' provenance and opens a DRAFT release holding them, SHA256SUMS and the notes:
-# docs/release/vX.Y.Z.md, a list of what is in the release, then GitHub's generated list of the pull requests since
-# the previous published release (grouped by .github/release.yml; none for the first release). Nothing is public
-# until the maintainer reviews the draft and presses Publish. Re-run it for an existing tag from the Actions tab
-# (workflow_dispatch).
+# The release (docs/release.md). The toolchains are built and tested on the maintainer's machine, not in CI. The
+# maintainer uploads one gcc-arm-none-eabi-<major>-<minor>-<patch>.tar.xz for each GCC in
+# compilers/arm-none-eabi/versions.inc to a DRAFT release named for the tag, then pushes the signed tag vX.Y.Z.
+# This workflow completes that draft: it checks docs/release/vX.Y.Z.md and the archives, adds SHA256SUMS, and writes
+# the notes: the hand-written highlights, a list of what is in the release, then GitHub's generated list of the pull
+# requests since the previous published release (grouped by .github/release.yml; none for the first release). The
+# release stays a draft until the maintainer reviews it and presses Publish. Re-run it for an existing tag from the
+# Actions tab (workflow_dispatch). It builds nothing, so it takes a minute.
 name: release
 
 on:
@@ -40,57 +41,45 @@ env:
   TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
-  notes:
-    name: release notes
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out
-        uses: actions/checkout@v5
-        with:
-          ref: refs/tags/${{ env.TAG }}
-
-      # Fail before the hours of builds, not after
-      - name: Release notes present
-        run: test -f "docs/release/${TAG}.md" || { echo "docs/release/${TAG}.md is missing"; exit 1; }
-
-  gate:
-    name: gate
-    needs: notes
-    uses: ./.github/workflows/ci.yml
-    with:
-      ref: refs/tags/${{ inputs.tag || github.ref_name }}
-
   draft:
-    name: draft release
-    needs: gate
+    name: complete the draft release
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write
-      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out
         uses: actions/checkout@v5
         with:
           ref: refs/tags/${{ env.TAG }}
 
-      - name: Download
-        uses: actions/download-artifact@v4
-        with:
-          pattern: gcc-arm-none-eabi-*
-          path: dist
-          merge-multiple: true
+      - name: Release notes present
+        run: test -f "docs/release/${TAG}.md" || { echo "docs/release/${TAG}.md is missing"; exit 1; }
+
+      # The archives are the maintainer's; this only checks that the draft holds the ones versions.inc asks for
+      - name: Check the draft
+        run: |
+          inc=compilers/arm-none-eabi/versions.inc
+          var() { sed -n "s/^$1 *[?:]*= *//p" "${inc}" | head -1; }
+          gh release view "${TAG}" >/dev/null 2>&1 || { echo "No release for ${TAG}: create a draft and upload the archives first (docs/release.md)"; exit 1; }
+          [ "$(gh release view "${TAG}" --json isDraft --jq .isDraft)" = true ] || { echo "The release for ${TAG} is published already"; exit 1; }
+          have=$(gh release view "${TAG}" --json assets --jq '.assets[].name')
+          missing=0
+          for version in $(var GCC_VERSIONS); do
+            archive="gcc-arm-none-eabi-${version//./-}.tar.xz"
+            echo "${have}" | grep -qx "${archive}" || { echo "The draft has no ${archive}"; missing=1; }
+          done
+          exit ${missing}
 
       - name: Checksums
         run: |
-          cd dist
+          mkdir dist
+          gh release download "${TAG}" --pattern 'gcc-arm-none-eabi-*.tar.xz' --dir dist
+          cd dist || exit 1
           sha256sum *.tar.xz >SHA256SUMS
           cat SHA256SUMS
-
-      - name: Attest provenance
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: dist/*.tar.xz
+          gh release upload "${TAG}" SHA256SUMS --clobber
 
       # What the release holds, from versions.inc at the tag: the hand-written highlights come first
       - name: Notes
@@ -110,29 +99,21 @@ jobs:
             echo
             libc=$(var RTOSKIT_LIBC_VERSION)
             [ -z "${libc}" ] || echo "Built with [rtoskit-libc ${libc}](https://github.com/sgstreet/rtoskit-libc/releases/tag/v${libc})."
-            echo "Check an archive with \`sha256sum -c SHA256SUMS\`, or \`gh attestation verify <archive> --repo ${GITHUB_REPOSITORY}\`."
+            echo "Check an archive with \`sha256sum -c SHA256SUMS\`. The archives were built and tested on the maintainer's machine; the tag is signed."
+            # The pull requests since the previous published release follow the hand-written notes; the first
+            # release has none to start from
+            previous=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[].tagName')
+            if [ -n "${previous}" ]; then
+              echo
+              gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="${TAG}" -f previous_tag_name="${previous}" --jq .body
+            fi
           } > notes.md
           cat notes.md
 
-      - name: Draft
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Update the draft
         run: |
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "A release for ${TAG} exists already; delete the draft to make it again"
-            exit 1
-          fi
-          prerelease=
+          prerelease=--prerelease=false
           case "${TAG}" in
             v0.* | *-*) prerelease=--prerelease ;;
           esac
-          # The pull requests since the previous published release follow the hand-written notes; the first
-          # release has none to start from
-          generate=
-          if [ -n "$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[].tagName')" ]; then
-            generate=--generate-notes
-          fi
-          gh release create "${TAG}" dist/*.tar.xz dist/SHA256SUMS \
-            --draft --verify-tag ${prerelease} ${generate} \
-            --title "rtoskit-gcc ${TAG}" \
-            --notes-file notes.md
+          gh release edit "${TAG}" ${prerelease} --title "rtoskit-gcc ${TAG}" --notes-file notes.md
