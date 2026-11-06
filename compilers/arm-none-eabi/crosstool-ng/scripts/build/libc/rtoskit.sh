@@ -66,11 +66,10 @@ rtoskit_main()
         [ -n "${built[${arch}]}" ] && continue
         for build_type in ${CT_LIBC_RTOSKIT_BUILD_TYPES}; do
             CT_DoLog EXTRA "Building C library for ${arch} (${build_type})"
-            # The library's make build has no variable for extra compiler flags, and sets its own CFLAGS and
-            # LIBC_CFLAGS, which a command-line value would replace. The compiler it runs is its CC, so the
-            # flags go there (the assembler sources pass through the same driver, and ignore them).
+            # LIBC_EXTRA_CFLAGS (rtoskit-libc 0.5.1) adds to the flags the library sets for itself, for its C
+            # sources only.
             rtoskit_make \
-                CC="${cross_compile}${CT_CC}${CT_LIBC_RTOSKIT_CFLAGS:+ ${CT_LIBC_RTOSKIT_CFLAGS}}" \
+                LIBC_EXTRA_CFLAGS="${CT_LIBC_RTOSKIT_CFLAGS}" \
                 PROJECT_ROOT="${CT_SRC_DIR}/rtoskit" \
                 TOOLS_ROOT="${CT_SRC_DIR}/rtoskit/tools" \
                 OUTPUT_ROOT="${build_dir}" \

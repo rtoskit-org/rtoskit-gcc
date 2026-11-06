@@ -8,9 +8,9 @@ Each toolchain has:
 
 - **Multilibs** for the Cortex-M cores rtoskit-libc supports (table below). The `release` (size) and `speed`
   builds of rtoskit-libc are installed for every multilib.
-- **rtoskit-libc** built from its release source (`RTOSKIT_LIBC_VERSION`, currently 0.5.0) with `-funwind-tables
-  -mpoke-function-name` (`CT_LIBC_RTOSKIT_CFLAGS`), so a backtrace passes through library frames and each library function
-  carries its name in the code before it.
+- **rtoskit-libc** built from its release source (`RTOSKIT_LIBC_VERSION`, currently 0.5.1) with `-funwind-tables
+  -mpoke-function-name` (`CT_LIBC_RTOSKIT_CFLAGS`, passed as `LIBC_EXTRA_CFLAGS`), so a backtrace passes through
+  library frames and each library function carries its name in the code before it.
 - **GDB 17** with Python.
 - **`local-exec` as the default TLS model**, which rtoskit-libc's `thread_local` needs. `-ftls-model=` on the
   command line still overrides it.
