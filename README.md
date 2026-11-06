@@ -8,7 +8,7 @@ Each toolchain has:
 
 - **Multilibs** for the Cortex-M cores rtoskit-libc supports (table below). The `release` (size) and `speed`
   builds of rtoskit-libc are installed for every multilib.
-- **rtoskit-libc** built from its release source (`RTOSKIT_LIBC_VERSION`, currently 0.5.1) with `-funwind-tables
+- **rtoskit-libc** built from its release source (`RTOSKIT_LIBC_VERSION`, currently 0.5.2) with `-funwind-tables
   -mpoke-function-name` (`CT_LIBC_RTOSKIT_CFLAGS`, passed as `LIBC_EXTRA_CFLAGS`), so a backtrace passes through
   library frames and each library function carries its name in the code before it.
 - **GDB 17** with Python.
@@ -32,8 +32,6 @@ Each toolchain has:
   call every pthread function strongly, since a static link would otherwise find threads inactive, and send
   `std::call_once` through rtoskit-libc's `__libc_call_once_eh`, so an exception from its function leaves the flag unset
   and the next call runs the function again. `std::thread` takes the library's default stack size and priority.
-  `<mutex>` includes `<stdlib.h>`, which declares C23's `once_flag`, so `once_flag` is ambiguous with `std::once_flag`
-  under `using namespace std`.
   `std::filesystem` does nothing useful.
 
 ## Dependencies
