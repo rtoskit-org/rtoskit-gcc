@@ -1,6 +1,0 @@
-[submodule "external/crosstool-ng"]
-	path = external/crosstool-ng
-	url = https://github.com/crosstool-ng/crosstool-ng.git
-[submodule "external/rtoskit-libc"]
-	path = external/rtoskit-libc
-	url = https://github.com/sgstreet/rtoskit-libc.git

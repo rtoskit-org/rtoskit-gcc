@@ -8,6 +8,9 @@ Each toolchain has:
 
 - **Multilibs** for the Cortex-M cores rtoskit-libc supports (table below). The `release` (size) and `speed`
   builds of rtoskit-libc are installed for every multilib.
+- **rtoskit-libc** built from its release source (`RTOSKIT_LIBC_VERSION`, currently 0.5.0) with `-funwind-tables
+  -mpoke-function-name` (`CT_LIBC_RTOSKIT_CFLAGS`), so a backtrace passes through library frames and each library function
+  carries its name in the code before it.
 - **GDB 17** with Python.
 - **`local-exec` as the default TLS model**, which rtoskit-libc's `thread_local` needs. `-ftls-model=` on the
   command line still overrides it.
@@ -47,7 +50,11 @@ Each toolchain has:
 	$ make                              # all three versions, one after the other (about 11 minutes each on 16 cores)
 	$ make GCC_VERSIONS=16.2.0          # one version
 
-`make` first runs `setup`, which initialises the submodules (`external/crosstool-ng`, `external/rtoskit-libc`).
+The build downloads its sources to `downloads/` and checks each against a pinned digest: crosstool-NG at the commit
+`CROSSTOOL_NG_REV` (SHA-256 `CROSSTOOL_NG_SHA256`) and the rtoskit-libc release `RTOSKIT_LIBC_VERSION`, which
+crosstool-NG fetches as the package `compilers/arm-none-eabi/crosstool-ng/packages/rtoskit/<version>` (its `chksum` holds
+the digests of the release's source archive, `v<version>.tar.gz`). All three are in
+`compilers/arm-none-eabi/versions.inc`. There are no submodules and nothing to initialise.
 Each toolchain lands in `images/gcc-arm-none-eabi-<major>-<minor>-<patch>.tar.xz`, with the crosstool-NG build log
 beside its work directory in `build/release/compilers/arm-none-eabi/gcc-<version>/`. Sources are downloaded to
 `downloads/`.
@@ -135,11 +142,11 @@ commits:
 	$ tools/scripts/gcc-releases check              # configured, newest on ftp.gnu.org, and whether crosstool-NG packages them
 	$ tools/scripts/gcc-releases update              # move each major to its latest minor
 	$ tools/scripts/gcc-releases rotate              # add the newest major, drop the oldest (16 15 14 -> 17 16 15)
-	$ tools/scripts/gcc-releases bump-libc [REF]     # move the rtoskit-libc submodule and stage it
+	$ tools/scripts/gcc-releases bump-libc [VERSION] # build with an rtoskit-libc release (default: the newest tag)
 	$ tools/scripts/gcc-releases --dry-run rotate    # show what would change
 
 If the pinned crosstool-NG does not package a version, `--ct-ng=latest` (or `--ct-ng=<ref>`) moves the
-`external/crosstool-ng` submodule. If no crosstool-NG revision has it, the script writes the package into
+crosstool-NG commit (`CROSSTOOL_NG_REV` and its digest in `versions.inc`). If no crosstool-NG revision has it, the script writes the package into
 `compilers/arm-none-eabi/crosstool-ng/packages/gcc/<version>/` and lists the package it replaces in
 `crosstool-ng.remove`.
 
@@ -149,10 +156,9 @@ If the pinned crosstool-NG does not package a version, `--ct-ng=latest` (or `--c
 |---|---|
 | `compilers/arm-none-eabi/arm-none-eabi.mk` | The build: one crosstool-NG run per version |
 | `compilers/arm-none-eabi/arm-none-eabi.defconfig.in` | The crosstool-NG configuration, shared by every version |
-| `compilers/arm-none-eabi/crosstool-ng/` | Laid over a copy of the crosstool-NG submodule: the `rtoskit` libc backend |
+| `compilers/arm-none-eabi/crosstool-ng/` | Laid over the downloaded crosstool-NG: the `rtoskit` libc backend and the package of the rtoskit-libc release |
 | `compilers/arm-none-eabi/t-rtoskit`, `rtoskit/` | The multilib list, its map and the spec files |
 | `compilers/arm-none-eabi/gcc-patches/` | GCC patches applied to every version (the libstdc++ OS port, libbacktrace, the POSIX thread model) |
-| `external/` | Submodules: crosstool-NG and rtoskit-libc |
 | `tools/scripts/` | `gcc-releases` (versions), `validate-toolchain`, `test-installed`, `gcc-torture` (validation) |
 | `tools/dejagnu/` | The DejaGnu board for `gcc-torture` and its expected failures |
 | `.github/workflows/ci.yml` | CI: build and validate every toolchain |

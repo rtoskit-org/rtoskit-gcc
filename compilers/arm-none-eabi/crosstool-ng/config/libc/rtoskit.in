@@ -31,6 +31,16 @@ config LIBC_RTOSKIT_BUILD_TYPES
       is installed in lib/<multidir>, every other one in
       lib/<multidir>/<build type>.
 
+config LIBC_RTOSKIT_CFLAGS
+    string
+    prompt "Extra compiler flags for the C library"
+    default ""
+    help
+      Flags added to every compile of the library's own sources (not to
+      the flags the library sets for itself, such as -Os or -std=c23),
+      for example "-funwind-tables -mpoke-function-name" to give a
+      backtrace through library frames and the name of each function.
+
 config LIBC_RTOSKIT_SPECS
     string
     prompt "Spec files to install"

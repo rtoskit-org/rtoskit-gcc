@@ -20,6 +20,7 @@
 #   -j JOBS  run this many configurations at once (default: the number of CPUs)
 #   -k       keep the build directory
 #   core     any of: default v6m v7m v7em-nofp v7em-fp v7em-dp v8mm-nofp v8mm-fp (default: all)
+# RTOSKIT_LIBC_SRC=<dir> tests with that rtoskit-libc source tree instead of the release in versions.inc.
 #
 # Created on: Oct 29, 2026
 #     Author: Stephen Street (stephen@redrocketcomputing.com)
@@ -47,8 +48,6 @@ PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 GCC=$(realpath "$1")/bin/arm-none-eabi-gcc
 GXX=${GCC%gcc}g++
 shift
-UNIT=${PROJECT_ROOT}/external/rtoskit-libc/test/unit
-[[ -d ${UNIT} ]] || { echo "missing ${UNIT}: run make setup" >&2; exit 2; }
 command -v qemu-arm > /dev/null || { echo "qemu-arm is required" >&2; exit 2; }
 
 declare -A options=(
@@ -66,6 +65,28 @@ cores=("$@")
 
 work=$(mktemp -d)
 if [[ -z ${keep} ]]; then trap 'rm -rf "${work}"' EXIT; else echo "build directory: ${work}"; fi
+
+# The tests are the library's own, from the release the toolchains are built with: RTOSKIT_LIBC_VERSION in versions.inc,
+# its source archive in downloads/ (fetched from GitHub when absent) checked against the digest crosstool-NG checks
+# it against. RTOSKIT_LIBC_SRC names another source tree to test with instead.
+LIBC_SRC=${RTOSKIT_LIBC_SRC:-}
+if [[ -z ${LIBC_SRC} ]]; then
+	version=$(sed -n 's/^RTOSKIT_LIBC_VERSION *[?:]*= *//p' "${PROJECT_ROOT}/compilers/arm-none-eabi/versions.inc" | head -1)
+	[[ -n ${version} ]] || { echo "no RTOSKIT_LIBC_VERSION in versions.inc" >&2; exit 2; }
+	archive=${PROJECT_ROOT}/downloads/v${version}.tar.gz
+	sha256=$(awk '$1 == "sha256" { print $3 }' "${PROJECT_ROOT}/compilers/arm-none-eabi/crosstool-ng/packages/rtoskit/${version}/chksum")
+	if [[ ! -f ${archive} ]]; then
+		mkdir -p "${PROJECT_ROOT}/downloads"
+		curl -fsSL -o "${archive}.part" "https://github.com/sgstreet/rtoskit-libc/archive/refs/tags/v${version}.tar.gz" &&
+			mv "${archive}.part" "${archive}" || { echo "cannot download rtoskit-libc ${version}" >&2; exit 2; }
+	fi
+	echo "${sha256}  ${archive}" | sha256sum -c --status - || { echo "${archive} does not match its sha256 in the rtoskit package" >&2; exit 2; }
+	mkdir -p "${work}/src"
+	tar -xzf "${archive}" -C "${work}/src"
+	LIBC_SRC=${work}/src/rtoskit-libc-${version}
+fi
+UNIT=${LIBC_SRC}/test/unit
+[[ -d ${UNIT} ]] || { echo "missing ${UNIT}" >&2; exit 2; }
 
 # Build one unit test into <elf>: the C sources in one command as strict C23, as the library builds them, or, for a C++ test, each source on its own, as C++23
 # unless the test's .mk gives that object another -std
@@ -113,7 +134,7 @@ run_config() { # run_config <core> <release|speed>
 		limit=60
 		[[ -f ${UNIT}/${test}/${test}.timeout ]] && limit=$(< "${UNIT}/${test}/${test}.timeout")
 		if [[ -x ${UNIT}/${test}/${test}.run ]]; then
-			(cd "${dir}" && PROJECT_ROOT=${PROJECT_ROOT}/external/rtoskit-libc TARGET_RUNNER="qemu-arm -cpu max" timeout "${limit}" "${UNIT}/${test}/${test}.run" "${elf}") > "${dir}/${test}.log" 2>&1
+			(cd "${dir}" && PROJECT_ROOT=${LIBC_SRC} TARGET_RUNNER="qemu-arm -cpu max" timeout "${limit}" "${UNIT}/${test}/${test}.run" "${elf}") > "${dir}/${test}.log" 2>&1
 		else
 			(cd "${dir}" && timeout "${limit}" qemu-arm -cpu max "${elf}") > "${dir}/${test}.log" 2>&1
 		fi
