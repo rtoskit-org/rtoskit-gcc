@@ -11,7 +11,7 @@
 #     Author: Stephen Street (stephen@redrocketcomputing.com)
 #
 
-# The release (docs/release.md). Pushing a tag vX.Y.Z runs the pull request gate of ci.yml on the tagged commit:
+# The release (docs/release.md). Pushing a tag vX.Y.Z runs the toolchain gate, ci.yml, on the tagged commit:
 # every toolchain in compilers/arm-none-eabi/versions.inc is built from scratch, validated and tested. It then
 # attests the toolchains' provenance and opens a DRAFT release holding them, SHA256SUMS and the notes:
 # docs/release/vX.Y.Z.md, a list of what is in the release, then GitHub's generated list of the pull requests since

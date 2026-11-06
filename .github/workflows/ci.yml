@@ -11,7 +11,7 @@
 #     Author: Stephen Street (stephen@redrocketcomputing.com)
 #
 
-# The pull request gate: build each toolchain in compilers/arm-none-eabi/versions.inc from scratch, then
+# The toolchain gate: build each toolchain in compilers/arm-none-eabi/versions.inc from scratch, then
 #  - tools/scripts/validate-toolchain: multilibs, core selection, TLS default, gdb Python, and a threaded
 #    program linked with every multilib and run under qemu-arm;
 #  - tools/scripts/test-installed: rtoskit-libc's unit tests built against the installed toolchain only.
@@ -20,14 +20,12 @@
 # A build uses about 15 GB of disk and an hour or more on a standard runner: set the repository variable
 # CI_RUNNER to the label of a larger runner to speed it up.
 #
-# release.yml calls this workflow on a release tag as its gate, and takes the toolchains it uploads.
+# It does not run on pull requests or pushes: a run is about six runner-hours, so it runs only on request
+# (workflow_dispatch) and as the release gate. release.yml calls it on a release tag, and takes the toolchains
+# it uploads. Add pull_request and push triggers back here to run it on every change.
 name: ci
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       torture:

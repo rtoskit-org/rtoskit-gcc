@@ -11,7 +11,7 @@ the release notes spell out. While the major number is 0, a minor release may ch
 Pushing a tag that matches `vX.Y.Z` runs `.github/workflows/release.yml`:
 
 1. It stops at once if `docs/release/vX.Y.Z.md` does not exist.
-2. It runs the pull request gate, `.github/workflows/ci.yml`, on the tagged commit: every toolchain is built from
+2. It runs the toolchain gate, `.github/workflows/ci.yml`, on the tagged commit: every toolchain is built from
    scratch, then `validate-toolchain` and `test-installed` run on it. A failure stops the release; nothing is published.
    (The GCC C torture tests are not part of it; run them from the Actions tab first if you want them.)
 3. It writes `SHA256SUMS` and a signed build-provenance attestation for each archive
@@ -41,7 +41,7 @@ You can edit all of it in the draft before you publish it.
 
 1. Bring `versions.inc` to what you want to release: `tools/scripts/gcc-releases check` shows what is current, and
    `update`, `rotate` and `bump-libc` move it. Merge that through a pull request, as any change.
-2. Write `docs/release/vX.Y.Z.md`, open a pull request with it and merge it once CI is green.
+2. Write `docs/release/vX.Y.Z.md`, open a pull request with it and merge it. CI does not run on pull requests: build and test locally, or start it from the Actions tab first.
 3. Create a signed, annotated tag on that commit of `main` and push it. The signature is your sign-off on the code
    being released:
 

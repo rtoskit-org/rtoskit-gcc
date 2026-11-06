@@ -113,7 +113,7 @@ the port.
 
 ## Validating a toolchain
 
-Three scripts check an unpacked toolchain; the first two run in CI on every toolchain it builds:
+Three scripts check an unpacked toolchain; the first two run in CI on every toolchain it builds when it runs:
 
 	$ tools/scripts/validate-toolchain gcc-arm-none-eabi-16-2-0
 	$ tools/scripts/test-installed gcc-arm-none-eabi-16-2-0
@@ -129,7 +129,7 @@ They need `qemu-arm` (`qemu-user`), and `gcc-torture` also `runtest` (`dejagnu`)
 
 ## CI
 
-`.github/workflows/ci.yml` builds every version in `versions.inc` from scratch, then runs `validate-toolchain` and `test-installed` on it, and uploads the toolchain. The GCC torture tests run on request (*Run workflow*, *torture*).
+`.github/workflows/ci.yml` builds every version in `versions.inc` from scratch, then runs `validate-toolchain` and `test-installed` on it, and uploads the toolchain. It does not run on pull requests or pushes, because a run takes about six runner-hours: start it from the Actions tab (*Run workflow*), where *torture* adds the GCC torture tests, or build and test locally. A release tag runs it as the release gate.
 
 - **Variable `CI_RUNNER`** (optional): the label of a larger runner. A build uses about 15 GB of disk and takes an hour or more on a standard runner.
 - The build uses `BUILD_MANUALS=n` (no PDF or HTML manuals), which is also available locally.
