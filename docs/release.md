@@ -1,6 +1,6 @@
 # Making a release
 
-A release is a signed tag `vX.Y.Z` on `main`, and a GitHub release that holds the toolchains `main` builds: one
+A release is a signed tag `vX.Y.Z` on `main`, and a GitHub release that holds the toolchains built from `main`: one
 `gcc-arm-none-eabi-<major>-<minor>-<patch>.tar.xz` for each GCC in `compilers/arm-none-eabi/versions.inc`
 (x86_64 Linux hosts), and `SHA256SUMS`. A release's version is this repository's own, not GCC's or rtoskit-libc's: it
 names a set of GCC versions, one rtoskit-libc release, one crosstool-NG commit and these patches, which `versions.inc` and
@@ -8,18 +8,19 @@ the release notes spell out. While the major number is 0, a minor release may ch
 
 ## What the release workflow does
 
-Pushing a tag that matches `vX.Y.Z` runs `.github/workflows/release.yml`:
+CI does not build releases: a toolchain build takes about two hours of runner time per GCC, so you build and test the
+toolchains on your own machine and upload the archives to a **draft** release. Pushing the signed tag then runs
+`.github/workflows/release.yml`, which builds nothing and takes a minute:
 
 1. It stops at once if `docs/release/vX.Y.Z.md` does not exist.
-2. It runs the toolchain gate, `.github/workflows/ci.yml`, on the tagged commit: every toolchain is built from
-   scratch, then `validate-toolchain` and `test-installed` run on it. A failure stops the release; nothing is published.
-   (The GCC C torture tests are not part of it; run them from the Actions tab first if you want them.)
-3. It writes `SHA256SUMS` and a signed build-provenance attestation for each archive
-   (`gh attestation verify <archive> --repo sgstreet/rtoskit-gcc`).
-4. It creates a **draft** release with the archives and the notes. A `0.x` or `-rc` version is marked as a
-   pre-release.
+2. It stops if there is no draft release named for the tag, or if the draft lacks the `gcc-arm-none-eabi-<version>.tar.xz`
+   for any GCC in `versions.inc`.
+3. It downloads the archives, writes `SHA256SUMS` and uploads it to the draft.
+4. It writes the release notes and title, and marks a `0.x` or `-rc` version as a pre-release. The release stays a
+   draft.
 
-A draft is visible only to people with write access. Nothing is public until you publish it.
+A draft is visible only to people with write access. Nothing is public until you publish it. There is no build
+provenance attestation: the archives are yours, so the signed tag and `SHA256SUMS` are what vouch for them.
 
 ## How the release notes are made
 
@@ -41,12 +42,29 @@ You can edit all of it in the draft before you publish it.
 
 1. Bring `versions.inc` to what you want to release: `tools/scripts/gcc-releases check` shows what is current, and
    `update`, `rotate` and `bump-libc` move it. Merge that through a pull request, as any change.
-2. Write `docs/release/vX.Y.Z.md`, open a pull request with it and merge it. CI does not run on pull requests: build and test locally, or start it from the Actions tab first.
-3. Create a signed, annotated tag on that commit of `main` and push it. The signature is your sign-off on the code
-   being released:
+2. Write `docs/release/vX.Y.Z.md`, open a pull request with it and merge it. CI does not run on pull requests.
+3. On the merged commit of `main`, build and test every toolchain:
 
    ```sh
-   git fetch origin main
+   git switch main && git pull
+   make BUILD_MANUALS=n
+   for v in 16-2-0 15-3-0 14-4-0; do   # the versions in versions.inc
+       d=$(mktemp -d) && tar -xJf images/gcc-arm-none-eabi-$v.tar.xz -C "$d"
+       tools/scripts/validate-toolchain "$d"/gcc-arm-none-eabi-$v
+       tools/scripts/test-installed -j "$(nproc)" "$d"/gcc-arm-none-eabi-$v
+   done
+   ```
+
+   Run `tools/scripts/gcc-torture` too if you want (see the README).
+4. Upload the archives to a draft release for the tag. The tag does not exist yet, which is fine for a draft:
+
+   ```sh
+   gh release create vX.Y.Z images/gcc-arm-none-eabi-*.tar.xz --draft --target main --title "rtoskit-gcc vX.Y.Z" --notes "pending"
+   ```
+5. Create a signed, annotated tag on the same commit and push it. The signature is your sign-off on the code being
+   released:
+
+   ```sh
    git tag -s vX.Y.Z -m "rtoskit-gcc vX.Y.Z" origin/main
    git push origin vX.Y.Z
    ```
@@ -54,14 +72,13 @@ You can edit all of it in the draft before you publish it.
    `-s` signs with your GPG key, or with your SSH key after `git config gpg.format ssh` and
    `git config user.signingkey ~/.ssh/<key>.pub`. Add the same key to GitHub (Settings, SSH and GPG keys, as a signing
    key) and the tag shows as **Verified**. Check it locally with `git tag -v vX.Y.Z`.
-4. Watch the `release` workflow in the Actions tab. It takes as long as CI does: an hour or more on a standard runner,
-   less with a larger one (the repository variable `CI_RUNNER`).
-5. Review the draft under Releases: the notes, the files (one archive per GCC and `SHA256SUMS`), and that the tag shows
+6. Watch the `release` workflow in the Actions tab; it takes about a minute.
+7. Review the draft under Releases: the notes, the files (one archive per GCC and `SHA256SUMS`), and that the tag shows
    as Verified. Then press **Publish release**. Publishing is your sign-off on the release itself.
 
-If the workflow fails, fix the cause on `main` and move the tag only if the release was never published
-(`git push origin :refs/tags/vX.Y.Z`, then tag again). To rebuild the draft for a tag, delete the draft and run the
-workflow from the Actions tab with the tag name (`workflow_dispatch`). Never move a published tag: make a new patch
+If the workflow fails, fix the cause (a missing archive or notes file) and run the workflow again from the Actions tab
+with the tag name (`workflow_dispatch`); the draft is completed in place. Move the tag only if the release was never
+published (`git push origin :refs/tags/vX.Y.Z`, then tag again). Never move a published tag: make a new patch
 release instead.
 
 ## Protecting releases (repository settings, once)

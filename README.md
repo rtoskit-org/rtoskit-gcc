@@ -129,15 +129,15 @@ They need `qemu-arm` (`qemu-user`), and `gcc-torture` also `runtest` (`dejagnu`)
 
 ## CI
 
-`.github/workflows/ci.yml` builds every version in `versions.inc` from scratch, then runs `validate-toolchain` and `test-installed` on it, and uploads the toolchain. It does not run on pull requests or pushes, because a run takes about six runner-hours: start it from the Actions tab (*Run workflow*), where *torture* adds the GCC torture tests, or build and test locally. A release tag runs it as the release gate.
+`.github/workflows/ci.yml` builds every version in `versions.inc` from scratch, then runs `validate-toolchain` and `test-installed` on it, and uploads the toolchain. It does not run on pull requests or pushes, because a run takes about six runner-hours: start it from the Actions tab (*Run workflow*), where *torture* adds the GCC torture tests, or build and test locally.
 
 - **Variable `CI_RUNNER`** (optional): the label of a larger runner. A build uses about 15 GB of disk and takes an hour or more on a standard runner.
 - The build uses `BUILD_MANUALS=n` (no PDF or HTML manuals), which is also available locally.
 
 ## Releases
 
-A release is a signed tag `vX.Y.Z`: `.github/workflows/release.yml` builds and tests every toolchain with CI's gate,
-attests them and opens a draft GitHub release holding the archives, `SHA256SUMS` and the notes. See
+A release is a signed tag `vX.Y.Z` and a draft GitHub release holding the toolchains you built and tested locally:
+`.github/workflows/release.yml` adds `SHA256SUMS` and the notes when the tag is pushed. Nothing is built in CI. See
 [docs/release.md](docs/release.md).
 
 ## Updating the GCC versions
