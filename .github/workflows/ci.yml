@@ -19,6 +19,8 @@
 #
 # A build uses about 15 GB of disk and an hour or more on a standard runner: set the repository variable
 # CI_RUNNER to the label of a larger runner to speed it up.
+#
+# release.yml calls this workflow on a release tag as its gate, and takes the toolchains it uploads.
 name: ci
 
 on:
@@ -32,6 +34,12 @@ on:
         description: Also run the GCC C torture tests (about 30 minutes per toolchain)
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      ref:
+        description: The ref to build (release.yml passes its tag); the calling event's own ref when empty
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -46,6 +54,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
       - name: shellcheck
         run: shellcheck -S warning tools/scripts/gcc-releases tools/scripts/validate-toolchain tools/scripts/test-installed tools/scripts/gcc-torture
 
@@ -56,6 +66,8 @@ jobs:
       gcc: ${{ steps.list.outputs.gcc }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
       - name: GCC versions to build
         id: list
         run: |
@@ -74,6 +86,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
 
       # One toolchain build takes about 15 GB; the runner image carries tools that are not needed here
       - name: Free disk space

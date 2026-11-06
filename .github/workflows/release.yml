@@ -1,0 +1,138 @@
+#
+# Copyright (C) 2026 Red Rocket Computing, LLC
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# release.yml
+#
+# Created on: Nov 5, 2026
+#     Author: Stephen Street (stephen@redrocketcomputing.com)
+#
+
+# The release (docs/release.md). Pushing a tag vX.Y.Z runs the pull request gate of ci.yml on the tagged commit:
+# every toolchain in compilers/arm-none-eabi/versions.inc is built from scratch, validated and tested. It then
+# attests the toolchains' provenance and opens a DRAFT release holding them, SHA256SUMS and the notes:
+# docs/release/vX.Y.Z.md, a list of what is in the release, then GitHub's generated list of the pull requests since
+# the previous published release (grouped by .github/release.yml; none for the first release). Nothing is public
+# until the maintainer reviews the draft and presses Publish. Re-run it for an existing tag from the Actions tab
+# (workflow_dispatch).
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'An existing tag, e.g. v0.1.0'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  notes:
+    name: release notes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      # Fail before the hours of builds, not after
+      - name: Release notes present
+        run: test -f "docs/release/${TAG}.md" || { echo "docs/release/${TAG}.md is missing"; exit 1; }
+
+  gate:
+    name: gate
+    needs: notes
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: refs/tags/${{ inputs.tag || github.ref_name }}
+
+  draft:
+    name: draft release
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - name: Download
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gcc-arm-none-eabi-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.xz >SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.tar.xz
+
+      # What the release holds, from versions.inc at the tag: the hand-written highlights come first
+      - name: Notes
+        run: |
+          inc=compilers/arm-none-eabi/versions.inc
+          var() { sed -n "s/^$1 *[?:]*= *//p" "${inc}" | head -1; }
+          {
+            cat "docs/release/${TAG}.md"
+            echo
+            echo "## Contents"
+            echo
+            echo "| Toolchain | Archive |"
+            echo "|---|---|"
+            for version in $(var GCC_VERSIONS); do
+              echo "| arm-none-eabi GCC ${version} | \`gcc-arm-none-eabi-${version//./-}.tar.xz\` |"
+            done
+            echo
+            libc=$(var RTOSKIT_LIBC_VERSION)
+            [ -z "${libc}" ] || echo "Built with [rtoskit-libc ${libc}](https://github.com/sgstreet/rtoskit-libc/releases/tag/v${libc})."
+            echo "Check an archive with \`sha256sum -c SHA256SUMS\`, or \`gh attestation verify <archive> --repo ${GITHUB_REPOSITORY}\`."
+          } > notes.md
+          cat notes.md
+
+      - name: Draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "A release for ${TAG} exists already; delete the draft to make it again"
+            exit 1
+          fi
+          prerelease=
+          case "${TAG}" in
+            v0.* | *-*) prerelease=--prerelease ;;
+          esac
+          # The pull requests since the previous published release follow the hand-written notes; the first
+          # release has none to start from
+          generate=
+          if [ -n "$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[].tagName')" ]; then
+            generate=--generate-notes
+          fi
+          gh release create "${TAG}" dist/*.tar.xz dist/SHA256SUMS \
+            --draft --verify-tag ${prerelease} ${generate} \
+            --title "rtoskit-gcc ${TAG}" \
+            --notes-file notes.md
