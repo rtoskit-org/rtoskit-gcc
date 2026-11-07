@@ -4,7 +4,7 @@
 GCC_VERSIONS ?= 16.2.0 15.3.0 14.4.0
 
 # The rtoskit-libc release every toolchain is built with. crosstool-NG downloads that release's source archive
-# (github.com/sgstreet/rtoskit-libc, tag v<version>) and checks it against the digests in
+# (github.com/rtoskit-org/rtoskit-libc, tag v<version>) and checks it against the digests in
 # crosstool-ng/packages/rtoskit/<version>/chksum. Maintained by tools/scripts/gcc-releases bump-libc.
 RTOSKIT_LIBC_VERSION ?= 0.5.2
 
