@@ -1,7 +1,7 @@
 # rtoskit-gcc
 
 Builds `arm-none-eabi` GCC cross toolchains with [crosstool-NG](https://github.com/crosstool-ng/crosstool-ng),
-using [rtoskit-libc](https://github.com/sgstreet/rtoskit-libc) as the C library, for the last three GCC major
+using [rtoskit-libc](https://github.com/rtoskit-org/rtoskit-libc) as the C library, for the last three GCC major
 releases at their latest minor release (currently 16.2.0, 15.3.0 and 14.4.0).
 
 Each toolchain has:
@@ -82,7 +82,7 @@ to the rtoskit-libc architecture it is built from. Options GCC maps onto a liste
 | `thumb/v8-m.main+fp/hard` | `armv8-m.main` | Cortex-M33 with FPU (Cortex-M55 and M85 use it too, without MVE) |
 
 The default (no `-mcpu`) is Thumb Armv6S-M soft-float. ARM-state and Armv4/5 targets are not supported. Adding GCC's
-full `rmprofile` set is tracked in [#3](https://github.com/sgstreet/rtoskit-gcc/issues/3).
+full `rmprofile` set is tracked in [#3](https://github.com/rtoskit-org/rtoskit-gcc/issues/3).
 
 ## Using a toolchain
 
@@ -123,7 +123,7 @@ Three scripts check an unpacked toolchain; the first two run in CI on every tool
 | `test-installed` | rtoskit-libc's unit tests built against the *installed* toolchain only (no in-tree include or library paths) for eight core options, release and speed, and run under `qemu-arm`. Tests that need the library's internals are skipped. |
 | `gcc-torture` | GCC's own `gcc.c-torture/execute` tests (about 1700 programs, eight optimisation levels each) through DejaGnu on the multilib the options select. Failures that cannot pass here are listed in `tools/dejagnu/torture.xfail`. |
 
-They need `qemu-arm` (`qemu-user`), and `gcc-torture` also `runtest` (`dejagnu`). All of them run programs through the Linux test port under `qemu-arm`: nothing yet runs the default `none` port on a bare-metal core ([#5](https://github.com/sgstreet/rtoskit-gcc/issues/5)).
+They need `qemu-arm` (`qemu-user`), and `gcc-torture` also `runtest` (`dejagnu`). All of them run programs through the Linux test port under `qemu-arm`: nothing yet runs the default `none` port on a bare-metal core ([#5](https://github.com/rtoskit-org/rtoskit-gcc/issues/5)).
 
 ## CI
 

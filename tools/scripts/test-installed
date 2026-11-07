@@ -77,7 +77,7 @@ if [[ -z ${LIBC_SRC} ]]; then
 	sha256=$(awk '$1 == "sha256" { print $3 }' "${PROJECT_ROOT}/compilers/arm-none-eabi/crosstool-ng/packages/rtoskit/${version}/chksum")
 	if [[ ! -f ${archive} ]]; then
 		mkdir -p "${PROJECT_ROOT}/downloads"
-		curl -fsSL -o "${archive}.part" "https://github.com/sgstreet/rtoskit-libc/archive/refs/tags/v${version}.tar.gz" &&
+		curl -fsSL -o "${archive}.part" "https://github.com/rtoskit-org/rtoskit-libc/archive/refs/tags/v${version}.tar.gz" &&
 			mv "${archive}.part" "${archive}" || { echo "cannot download rtoskit-libc ${version}" >&2; exit 2; }
 	fi
 	echo "${sha256}  ${archive}" | sha256sum -c --status - || { echo "${archive} does not match its sha256 in the rtoskit package" >&2; exit 2; }

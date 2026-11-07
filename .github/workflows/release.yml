@@ -98,7 +98,7 @@ jobs:
             done
             echo
             libc=$(var RTOSKIT_LIBC_VERSION)
-            [ -z "${libc}" ] || echo "Built with [rtoskit-libc ${libc}](https://github.com/sgstreet/rtoskit-libc/releases/tag/v${libc})."
+            [ -z "${libc}" ] || echo "Built with [rtoskit-libc ${libc}](https://github.com/rtoskit-org/rtoskit-libc/releases/tag/v${libc})."
             echo "Check an archive with \`sha256sum -c SHA256SUMS\`. The archives were built and tested on the maintainer's machine; the tag is signed."
             # The pull requests since the previous published release follow the hand-written notes; the first
             # release has none to start from

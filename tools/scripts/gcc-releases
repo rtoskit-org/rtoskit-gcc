@@ -32,7 +32,7 @@ REMOVE_LIST=${COMPILER_DIR}/crosstool-ng.remove
 LIBC_PKG=${OVERLAY}/packages/rtoskit
 CTNG_REPO=${CTNG_REPO:-https://github.com/crosstool-ng/crosstool-ng}
 CTNG_RAW=${CTNG_RAW:-https://raw.githubusercontent.com/crosstool-ng/crosstool-ng}
-LIBC_REPO=${LIBC_REPO:-https://github.com/sgstreet/rtoskit-libc}
+LIBC_REPO=${LIBC_REPO:-https://github.com/rtoskit-org/rtoskit-libc}
 DOWNLOADS=${PROJECT_ROOT}/downloads
 
 dry_run=
