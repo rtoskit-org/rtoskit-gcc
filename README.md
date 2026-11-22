@@ -6,8 +6,8 @@ releases at their latest minor release (currently 16.2.0, 15.3.0 and 14.4.0).
 
 Each toolchain has:
 
-- **Multilibs** for the Cortex-M cores rtoskit-libc supports (table below). The `release` (size) and `speed`
-  builds of rtoskit-libc are installed for every multilib.
+- **Multilibs** for the Cortex-M cores rtoskit-libc supports (table below). The `release` (size), `speed` and
+  `fast` (speed with a faster, less accurate maths library) builds of rtoskit-libc are installed for every multilib.
 - **rtoskit-libc** built from its release source (`RTOSKIT_LIBC_VERSION`, currently 0.5.3) with `-funwind-tables
   -mpoke-function-name` (`CT_LIBC_RTOSKIT_CFLAGS`, passed as `LIBC_EXTRA_CFLAGS`), so a backtrace passes through
   library frames and each library function carries its name in the code before it.
@@ -102,6 +102,7 @@ full `rmprofile` set is tracked in [#3](https://github.com/rtoskit-org/rtoskit-g
 | Option | Effect |
 |---|---|
 | `--speed` | Link the speed build of the library (`lib/<multilib>/speed/`) |
+| `--fast` | Link the fast build of the library (`lib/<multilib>/fast/`): the speed build with a faster maths library that is accurate to nearest only. Do not combine with `--speed` |
 | `--libc=<variant>` | `nofloat`, `minimal-printf` or `tinymalloc` instead of `libc.a` |
 | `--port=<name>` | Link `librtos-<name>.a` instead of `librtos-none.a` |
 | `--specs=rtoskit-linux.specs` | The Linux test port: run the program under `qemu-arm -cpu max` |
@@ -119,8 +120,8 @@ Three scripts check an unpacked toolchain; the first two run in CI on every tool
 
 | Script | Checks |
 |---|---|
-| `validate-toolchain` | The multilib list, which multilib each core selects, the default TLS model, gdb with Python, and that a threaded `printf`/`sinf`/`thread_local` program links with every multilib (release and speed) and runs under `qemu-arm`. For C++ it runs the threading classes (`std::thread`, the mutexes, `std::condition_variable`, `std::call_once`, `std::future`) and times `sleep_for`, `wait_for` and `try_lock_for` against `steady_clock` and `system_clock`. It checks the POSIX thread model and that libstdc++ was configured with every feature `<rtoskit-libc.h>` names. A C program must link none of the thread functions |
-| `test-installed` | rtoskit-libc's unit tests built against the *installed* toolchain only (no in-tree include or library paths) for eight core options, release and speed, and run under `qemu-arm`. Tests that need the library's internals are skipped. |
+| `validate-toolchain` | The multilib list, which multilib each core selects, the default TLS model, gdb with Python, and that a threaded `printf`/`sinf`/`thread_local` program links with every multilib (release, speed and fast) and runs under `qemu-arm`. For C++ it runs the threading classes (`std::thread`, the mutexes, `std::condition_variable`, `std::call_once`, `std::future`) and times `sleep_for`, `wait_for` and `try_lock_for` against `steady_clock` and `system_clock`. It checks the POSIX thread model and that libstdc++ was configured with every feature `<rtoskit-libc.h>` names. A C program must link none of the thread functions |
+| `test-installed` | rtoskit-libc's unit tests built against the *installed* toolchain only (no in-tree include or library paths) for eight core options, release, speed and fast, and run under `qemu-arm`. Tests that need the library's internals are skipped. |
 | `gcc-torture` | GCC's own `gcc.c-torture/execute` tests (about 1700 programs, eight optimisation levels each) through DejaGnu on the multilib the options select. Failures that cannot pass here are listed in `tools/dejagnu/torture.xfail`. |
 
 They need `qemu-arm` (`qemu-user`), and `gcc-torture` also `runtest` (`dejagnu`). All of them run programs through the Linux test port under `qemu-arm`: nothing yet runs the default `none` port on a bare-metal core ([#5](https://github.com/rtoskit-org/rtoskit-gcc/issues/5)).

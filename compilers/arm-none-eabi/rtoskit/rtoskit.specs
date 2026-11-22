@@ -21,7 +21,7 @@
 %rename link rtoskit_link
 
 *link:
-%{-speed:-L%:find-file(speed)} --gc-sections %(rtoskit_link)
+%{-speed:-L%:find-file(speed)} %{-fast:-L%:find-file(fast)} --gc-sections %(rtoskit_link)
 
 *lib:
 %{-port=*:-lrtos-%*;:-lrtos-none} %{-libc=*:-lc-%*;:-lc}

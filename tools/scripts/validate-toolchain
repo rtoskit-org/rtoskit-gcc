@@ -10,7 +10,7 @@
 #
 # Smoke test of an installed toolchain: the multilibs, the core-to-multilib selection, the default TLS
 # model, gdb with Python, and that a threaded program using printf, sinf and thread_local links with every
-# multilib (release and speed builds) and runs under qemu-arm through the Linux test port, and a C++ program
+# multilib (release, speed and fast builds) and runs under qemu-arm through the Linux test port, and a C++ program
 # (constructors, exceptions, RTTI, thread_local destructors) does the same; so do the hosted libstdc++, its
 # -fno-exceptions and -fno-rtti modes, std::stacktrace, the C++ threading classes (std::thread, std::mutex, ...) and the timing of sleep_for,
 # wait_for and try_lock_for on steady_clock and system_clock, and that libstdc++ was configured with every feature
@@ -80,7 +80,7 @@ check "TLS override" "R_ARM_TLS_IE32 " "$(tls_relocs "-ftls-model=initial-exec")
 # gdb with Python
 check "gdb python" "ok" "$("$T/bin/arm-none-eabi-gdb" -batch -ex 'python print("ok")' 2>&1 | tail -1)"
 
-# A threaded program: link with every multilib, release and speed, then run it under qemu
+# A threaded program: link with every multilib, release, speed and fast, then run it under qemu
 cat > "${work}/thr.c" <<'EOF'
 #include <stdio.h>
 #include <threads.h>
@@ -108,7 +108,7 @@ command -v qemu-arm > /dev/null || { have_qemu=n; echo "note: qemu-arm not found
 
 for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
 	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
-	for speed in "" "--speed"; do
+	for speed in "" "--speed" "--fast"; do
 		name="threads [${options} ${speed}]"
 		# shellcheck disable=SC2086
 		if ! "${GCC}" ${options} ${speed} --specs=rtoskit-linux.specs -Os "${work}/thr.c" -o "${work}/thr.elf" 2> "${work}/err.txt"; then
@@ -166,7 +166,7 @@ cxx_want="ctor a ctor b f=2 rtti=1 caught 42 ctor tl-thread dtor tl-thread ctor 
 GXX="${GCC%gcc}g++"
 for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
 	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
-	for speed in "" "--speed"; do
+	for speed in "" "--speed" "--fast"; do
 		name="c++ [${options} ${speed}]"
 		# shellcheck disable=SC2086
 		if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -Wall -Werror "${work}/cxx.cc" -o "${work}/cxx.elf" 2> "${work}/err.txt"; then
@@ -250,7 +250,7 @@ EOF
 hosted_want="out_of_range println 42 done failed=0"
 for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
 	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
-	for speed in "" "--speed"; do
+	for speed in "" "--speed" "--fast"; do
 		name="hosted c++ [${options} ${speed}]"
 		# shellcheck disable=SC2086
 		if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 "${work}/hosted.cc" -o "${work}/hosted.elf" 2> "${work}/err.txt"; then
@@ -301,7 +301,7 @@ noexc_want="10 2 2 abc1"
 for mode in "-fno-exceptions" "-fno-rtti" "-fno-exceptions -fno-rtti"; do
 	for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
 		"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
-		for speed in "" "--speed"; do
+		for speed in "" "--speed" "--fast"; do
 			name="c++ ${mode} [${options} ${speed}]"
 			# shellcheck disable=SC2086
 			if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 ${mode} "${work}/noexc.cc" -o "${work}/noexc.elf" 2> "${work}/err.txt"; then
@@ -349,7 +349,7 @@ st_want="stacktrace depth>=4 1 to_string ok"
 for mode in "" "-fno-exceptions -funwind-tables"; do
 	for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
 		"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
-		for speed in "" "--speed"; do
+		for speed in "" "--speed" "--fast"; do
 			name="stacktrace ${mode} [${options} ${speed}]"
 			# shellcheck disable=SC2086
 			if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 ${mode} "${work}/st.cc" -o "${work}/st.elf" -lstdc++exp 2> "${work}/err.txt"; then
@@ -503,7 +503,7 @@ EOF
 thr_want="mutex=4000 rec=1 timed=0,1 cv=1,1 once=1 onceexc=1,2 random=1 static=1,1 future=42,7 exc=1 tldtor=1 detach=1 id=1 shared=1,0"
 for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
 	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
-	for speed in "" "--speed"; do
+	for speed in "" "--speed" "--fast"; do
 		name="threads [${options} ${speed}]"
 		# shellcheck disable=SC2086
 		if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 "${work}/thr.cc" -o "${work}/thr.elf" 2> "${work}/err.txt"; then
@@ -589,7 +589,7 @@ EOF
 clk_want="mono=1 sleep=1,1 wait=1 lock=1 yield=1"
 for options in "-mcpu=cortex-m0plus" "-mcpu=cortex-m3" "-mcpu=cortex-m4" "-mcpu=cortex-m4 -mfloat-abi=hard" \
 	"-mcpu=cortex-m7 -mfpu=fpv5-d16 -mfloat-abi=hard" "-mcpu=cortex-m33" "-mcpu=cortex-m33 -mfloat-abi=hard"; do
-	for speed in "" "--speed"; do
+	for speed in "" "--speed" "--fast"; do
 		name="clocks [${options} ${speed}]"
 		# shellcheck disable=SC2086
 		if ! "${GXX}" ${options} ${speed} --specs=rtoskit-linux.specs -Os -std=gnu++23 "${work}/clk.cc" -o "${work}/clk.elf" 2> "${work}/err.txt"; then

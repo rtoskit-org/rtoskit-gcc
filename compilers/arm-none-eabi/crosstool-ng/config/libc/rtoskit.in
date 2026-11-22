@@ -25,7 +25,7 @@ config LIBC_RTOSKIT_MULTILIB_MAP
 config LIBC_RTOSKIT_BUILD_TYPES
     string
     prompt "Build types to install"
-    default "release speed"
+    default "release speed fast"
     help
       The rtoskit-libc BUILD_TYPEs to build for every multilib. The first
       is installed in lib/<multidir>, every other one in

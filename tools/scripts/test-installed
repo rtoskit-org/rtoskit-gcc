@@ -10,7 +10,7 @@
 #
 # Builds rtoskit-libc's unit tests against an INSTALLED toolchain and nothing else: its headers and libraries
 # come in through --specs=rtoskit-linux.specs, with no in-tree include or library paths. Each test is built for
-# a set of cores, in the release and speed builds, and run under qemu-arm. This checks that what the toolchain
+# a set of cores, in the release, speed and fast builds, and run under qemu-arm. This checks that what the toolchain
 # ships is what the library's own build produces.
 #
 # Only black-box tests can be built this way; a test that includes the library's internal headers (or the
@@ -47,6 +47,7 @@ fi
 PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 GCC=$(realpath "$1")/bin/arm-none-eabi-gcc
 GXX=${GCC%gcc}g++
+sysroot=$(dirname "$(dirname "${GCC}")")/arm-none-eabi
 shift
 command -v qemu-arm > /dev/null || { echo "qemu-arm is required" >&2; exit 2; }
 
@@ -91,11 +92,18 @@ UNIT=${LIBC_SRC}/test/unit
 # Build one unit test into <elf>: the C sources in one command as strict C23, as the library builds them, or, for a C++ test, each source on its own, as C++23
 # unless the test's .mk gives that object another -std
 build_test() { # build_test <core> <speed> <test> <extra flags> <elf>
-	local core=$1 speed=$2 test=$3 extra=$4 elf=$5 src name std objs=()
+	local core=$1 speed=$2 test=$3 extra=$4 elf=$5 src srcs name std objs=()
 	if ls "${UNIT}/${test}"/*.c > /dev/null 2>&1; then
+		# In the fast build a test's fast/<name>.c (its expectations of the fast accuracy contract) stands in for
+		# its <name>.c, as the library's own subdir.mk does
+		srcs=()
+		for src in "${UNIT}/${test}"/*.c; do
+			[[ ${speed} == --fast && -f ${UNIT}/${test}/fast/${src##*/} ]] && src=${UNIT}/${test}/fast/${src##*/}
+			srcs+=("${src}")
+		done
 		# shellcheck disable=SC2086
 		"${GCC}" ${options[${core}]} ${speed} --specs=rtoskit-linux.specs -Os -fno-builtin -std=c23 ${extra} -I"${UNIT}/${test}" \
-			"${UNIT}/${test}"/*.c -lm -o "${elf}"
+			"${srcs[@]}" -lm -o "${elf}"
 		return
 	fi
 	for src in "${UNIT}/${test}"/*.cpp; do
@@ -113,11 +121,16 @@ build_test() { # build_test <core> <speed> <test> <extra flags> <elf>
 
 # One core, one build type: build and run every test; the result is in <dir>/summary. The tests run in <dir>, so the
 # files some of them create (stdio) cannot collide with those of the configurations running at the same time.
-run_config() { # run_config <core> <release|speed>
+run_config() { # run_config <core> <release|speed|fast>
 	local core=$1 build=$2 dir=${work}/$1-$2 speed='' test extra limit status elf
 	mkdir -p "${dir}"
-	[[ ${build} == speed ]] && speed=--speed
+	[[ ${build} != release ]] && speed=--${build}
 	: > "${dir}/summary"
+	# The flavours test compares the build type's installed headers with the source tree's include/. The toolchain
+	# installs the library's headers beside libstdc++'s and gdb's, which are not the library's
+	mkdir -p "${dir}/install"
+	cp -r "${sysroot}/include" "${dir}/install/include"
+	rm -rf "${dir}/install/include/c++" "${dir}/install/include/gdb"
 	for test in $(cd "${UNIT}" && ls -d ./*/ | tr -d './'); do
 		[[ ${test} == run-unit || ${test} == none ]] && continue
 		compgen -G "${UNIT}/${test}/*.c" > /dev/null || compgen -G "${UNIT}/${test}/*.cpp" > /dev/null || continue
@@ -134,7 +147,7 @@ run_config() { # run_config <core> <release|speed>
 		limit=60
 		[[ -f ${UNIT}/${test}/${test}.timeout ]] && limit=$(< "${UNIT}/${test}/${test}.timeout")
 		if [[ -x ${UNIT}/${test}/${test}.run ]]; then
-			(cd "${dir}" && PROJECT_ROOT=${LIBC_SRC} TARGET_RUNNER="qemu-arm -cpu max" timeout "${limit}" "${UNIT}/${test}/${test}.run" "${elf}") > "${dir}/${test}.log" 2>&1
+			(cd "${dir}" && PROJECT_ROOT=${LIBC_SRC} INSTALL_ROOT=${dir}/install TARGET_RUNNER="qemu-arm -cpu max" timeout "${limit}" "${UNIT}/${test}/${test}.run" "${elf}") > "${dir}/${test}.log" 2>&1
 		else
 			(cd "${dir}" && timeout "${limit}" qemu-arm -cpu max "${elf}") > "${dir}/${test}.log" 2>&1
 		fi
@@ -145,7 +158,7 @@ run_config() { # run_config <core> <release|speed>
 
 for core in "${cores[@]}"; do
 	[[ -v options[${core}] ]] || { echo "unknown core ${core}" >&2; exit 2; }
-	for build in release speed; do
+	for build in release speed fast; do
 		while [[ $(jobs -rp | wc -l) -ge ${jobs} ]]; do wait -n; done
 		run_config "${core}" "${build}" &
 	done
@@ -155,7 +168,7 @@ wait
 bad=0
 printf '%-12s %-8s %5s %5s %9s %5s\n' core build pass fail buildfail skip
 for core in "${cores[@]}"; do
-	for build in release speed; do
+	for build in release speed fast; do
 		s=${work}/${core}-${build}/summary
 		f=$(grep -c '^FAIL' "${s}")
 		b=$(grep -c '^BUILDFAIL' "${s}")
